@@ -1,0 +1,32 @@
+plugins {
+    id("io.micronaut.application") version "4.6.1"
+    id("com.gradleup.shadow") version "8.3.0"
+    id("io.micronaut.aot") version "4.6.1"
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.vlife:vl-shared:1.0.0'
+    implementation("io.micronaut.security:micronaut-security-jwt")
+    implementation("org.mindrot:jbcrypt:0.4")
+
+    compileOnly 'org.projectlombok:lombok:1.18.32'
+    annotationProcessor 'org.projectlombok:lombok:1.18.32'
+
+    testCompileOnly 'org.projectlombok:lombok:1.18.32'
+    testAnnotationProcessor 'org.projectlombok:lombok:1.18.32'
+}
+
+application {
+    mainClass = "com.vlife.api.Application"
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}

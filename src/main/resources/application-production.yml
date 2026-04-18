@@ -1,0 +1,59 @@
+micronaut:
+  application:
+    name: vlife-api
+
+  server:
+    port: 8090
+    cors:
+      enabled: false
+      configurations:
+        web:
+          allowed-origins:
+            - http://localhost:5173
+            - http://127.0.0.1:5173
+            - http://14.225.255.170
+            - http://cms.vlife.com.vn
+          allowed-methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+          allowed-headers:
+            - Content-Type
+            - Authorization
+            - X-Requested-With
+            - Accept
+            - Origin
+          allow-credentials: true
+
+  security:
+    enabled: true
+    authentication: bearer
+    token:
+      jwt:
+        enabled: true
+        signatures:
+          secret:
+            generator:
+              secret: "45815a96aeec8c27fac6e9e0b33e26fc0ccb6d9f5adfc329bd0a6a43a6d7366eebae4d44a9672306c90a52489e41d46e683fcac25cb4f6d9677eca6421e5710d"
+              jws-algorithm: HS256
+        generator:
+          expiration: 3600
+    intercept-url-map:
+      - pattern: /auth/login
+        http-method: POST
+        access:
+          - isAnonymous()
+      - pattern: /**
+        http-method: OPTIONS
+        access:
+          - isAnonymous()
+
+datasources:
+  default:
+    url: jdbc:mysql://127.0.0.1:3306/vlife2?noAccessToProcedureBodies=true&useSSL=false&useUnicode=true&characterEncoding=UTF-8
+    driverClassName: com.mysql.cj.jdbc.Driver
+    username: root
+    password: "{3J%YrPY!"
+    dialect: MYSQL
