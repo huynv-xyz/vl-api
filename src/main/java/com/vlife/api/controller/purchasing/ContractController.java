@@ -66,6 +66,8 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
 
             x.setVatRate(ApiUtil.nvl(r.getVatRate()));
             x.setImportTaxRate(ApiUtil.nvl(r.getImportTaxRate()));
+            x.setPaymentMethod(ApiUtil.trim(r.getPaymentMethod()));
+            x.setTerm(ApiUtil.trim(r.getTerm()));
 
             x.setCreatedAt(LocalDateTime.now());
             x.setUpdatedAt(LocalDateTime.now());
@@ -95,6 +97,8 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
 
             x.setVatRate(ApiUtil.nvl(r.getVatRate()));
             x.setImportTaxRate(ApiUtil.nvl(r.getImportTaxRate()));
+            x.setPaymentMethod(ApiUtil.trim(r.getPaymentMethod()));
+            x.setTerm(ApiUtil.trim(r.getTerm()));
 
             x.setUpdatedAt(LocalDateTime.now());
 
@@ -195,6 +199,12 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
 
         @JsonProperty("import_tax_rate")
         private BigDecimal importTaxRate;
+
+        @JsonProperty("payment_method")
+        private String paymentMethod;
+
+        @JsonProperty("term")
+        private String term;
     }
 
     @Serdeable
