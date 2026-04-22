@@ -5,13 +5,22 @@ import com.vlife.api.controller.base.BaseCrudController;
 import com.vlife.shared.api.dto.ApiResponse;
 import com.vlife.shared.jdbc.dao.ProductDao;
 import com.vlife.shared.jdbc.entity.Product;
+import com.vlife.shared.service.ProductImportService;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
 import io.micronaut.http.HttpResponse;
+import io.micronaut.http.MediaType;
 import io.micronaut.http.annotation.*;
+import io.micronaut.http.multipart.CompletedFileUpload;
 import io.micronaut.serde.annotation.Serdeable;
 import jakarta.inject.Inject;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.Map;
 
@@ -22,9 +31,14 @@ import static com.vlife.shared.util.StringUtil.trim;
 @Controller("/products")
 public class ProductController extends BaseCrudController<Product, Integer, ProductDao> {
 
+    private final ProductImportService productImportService;
+
     @Inject
-    public ProductController(ProductDao dao, ProductBuilder builder) {
+    public ProductController(ProductDao dao,
+                             ProductBuilder builder,
+                             ProductImportService productImportService) {
         super(dao, builder);
+        this.productImportService = productImportService;
     }
 
     @Override
@@ -62,6 +76,44 @@ public class ProductController extends BaseCrudController<Product, Integer, Prod
             mergeNullFromDb(id, x, "id", "createdAt");
             return x;
         });
+    }
+
+    @Post(value = "/import-csv", consumes = MediaType.MULTIPART_FORM_DATA, produces = MediaType.APPLICATION_JSON)
+    public HttpResponse<?> importCsv(@Part("file") CompletedFileUpload file) {
+        if (file == null || file.getFilename() == null || file.getFilename().isBlank()) {
+            return HttpResponse.ok(ApiResponse.error(-400, "File upload không hợp lệ"));
+        }
+
+        String originalFilename = file.getFilename().trim();
+        String safeFilename = Paths.get(originalFilename).getFileName().toString();
+
+        if (!safeFilename.toLowerCase().endsWith(".csv")) {
+            return HttpResponse.ok(ApiResponse.error(-400, "Chỉ hỗ trợ file CSV"));
+        }
+
+        try {
+            Path dir = Paths.get("files");
+            Files.createDirectories(dir);
+
+            Path target = dir.resolve(safeFilename);
+
+            try (InputStream inputStream = file.getInputStream()) {
+                Files.copy(inputStream, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            int affected = productImportService.importCsv(target);
+
+            return HttpResponse.ok(ApiResponse.success(Map.of(
+                    "message", "Import CSV thành công",
+                    "file_name", safeFilename,
+                    "file_path", target.toString(),
+                    "affected", affected
+            )));
+        } catch (IOException e) {
+            return HttpResponse.ok(ApiResponse.error(-500, "Không thể lưu file CSV: " + e.getMessage()));
+        } catch (Exception e) {
+            return HttpResponse.ok(ApiResponse.error(-500, "Import CSV thất bại: " + e.getMessage()));
+        }
     }
 
     @Override

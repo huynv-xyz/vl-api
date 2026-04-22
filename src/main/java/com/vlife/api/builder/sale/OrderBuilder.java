@@ -5,12 +5,11 @@ import com.vlife.shared.api.builder.ItemBuilder;
 import com.vlife.shared.jdbc.dao.CustomerDao;
 import com.vlife.shared.jdbc.dao.EmployeeDao;
 import com.vlife.shared.jdbc.dao.ProductDao;
-import com.vlife.shared.jdbc.dao.sale.OrderItemDao;
+import com.vlife.shared.jdbc.dao.sale.*;
 import com.vlife.shared.jdbc.entity.Customer;
 import com.vlife.shared.jdbc.entity.Employee;
 import com.vlife.shared.jdbc.entity.Product;
-import com.vlife.shared.jdbc.entity.sale.Order;
-import com.vlife.shared.jdbc.entity.sale.OrderItem;
+import com.vlife.shared.jdbc.entity.sale.*;
 import com.vlife.shared.util.CommonUtil;
 import jakarta.inject.Singleton;
 
@@ -23,7 +22,13 @@ public class OrderBuilder extends ItemBuilder<Order> {
 
     private final CustomerDao customerDao;
     private final EmployeeDao employeeDao;
+    private final DeliveryDao deliveryDao;
+    private final DeliveryItemDao deliveryItemDao;
 
+    private final ExportDao exportDao;
+    private final ExportItemDao exportItemDao;
+
+    private final ArLedgerDao arLedgerDao;
     private final OrderItemDao orderItemDao;
     private final ProductDao productDao;
     private final ProductBuilder productBuilder;
@@ -33,13 +38,27 @@ public class OrderBuilder extends ItemBuilder<Order> {
             EmployeeDao employeeDao,
             OrderItemDao orderItemDao,
             ProductDao productDao,
-            ProductBuilder productBuilder
+            ProductBuilder productBuilder,
+
+            // 👇 thêm
+            DeliveryDao deliveryDao,
+            DeliveryItemDao deliveryItemDao,
+            ExportDao exportDao,
+            ExportItemDao exportItemDao,
+            ArLedgerDao arLedgerDao
     ) {
         this.customerDao = customerDao;
         this.employeeDao = employeeDao;
         this.orderItemDao = orderItemDao;
         this.productDao = productDao;
         this.productBuilder = productBuilder;
+
+        // 👇 init
+        this.deliveryDao = deliveryDao;
+        this.deliveryItemDao = deliveryItemDao;
+        this.exportDao = exportDao;
+        this.exportItemDao = exportItemDao;
+        this.arLedgerDao = arLedgerDao;
     }
 
     // ========================
@@ -51,6 +70,9 @@ public class OrderBuilder extends ItemBuilder<Order> {
 
         Map<String, Object> x = new LinkedHashMap<>(autoBuild(item));
 
+        // ========================
+        // CUSTOMER + EMPLOYEE
+        // ========================
         Customer customer = item.getCustomerId() != null
                 ? customerDao.findById(item.getCustomerId()).orElse(null)
                 : null;
@@ -62,10 +84,11 @@ public class OrderBuilder extends ItemBuilder<Order> {
         x.put("customer", customer);
         x.put("employee", employee);
 
-        // ===== load items
+        // ========================
+        // ORDER ITEMS
+        // ========================
         List<OrderItem> items = orderItemDao.findByOrderId(item.getId());
 
-        // ===== load product map
         Set<Integer> productIds = items.stream()
                 .map(OrderItem::getProductId)
                 .filter(Objects::nonNull)
@@ -75,6 +98,10 @@ public class OrderBuilder extends ItemBuilder<Order> {
                 productIds.isEmpty()
                         ? Collections.emptyMap()
                         : productDao.findByIdsAsMap(productIds);
+
+        // ===== exported map
+        Map<Integer, BigDecimal> exportedMap =
+                exportItemDao.sumExportedByOrderId(item.getId());
 
         List<Map<String, Object>> itemRes = new ArrayList<>();
 
@@ -89,12 +116,22 @@ public class OrderBuilder extends ItemBuilder<Order> {
                 m.put("product", productBuilder.buildItem(p));
             }
 
-            // ===== calc line total
+            BigDecimal exportedQty =
+                    exportedMap.getOrDefault(oi.getProductId(), BigDecimal.ZERO);
+
+            BigDecimal remain =
+                    oi.getQuantity().subtract(exportedQty);
+
+            BigDecimal discount =
+                    Optional.ofNullable(oi.getDiscount()).orElse(BigDecimal.ZERO);
+
             BigDecimal lineTotal =
                     oi.getQuantity()
                             .multiply(oi.getUnitPrice())
-                            .subtract(Optional.ofNullable(oi.getDiscount()).orElse(BigDecimal.ZERO));
+                            .subtract(discount);
 
+            m.put("exported_quantity", exportedQty);
+            m.put("remain_quantity", remain);
             m.put("line_total", lineTotal);
 
             total = total.add(lineTotal);
@@ -104,6 +141,78 @@ public class OrderBuilder extends ItemBuilder<Order> {
 
         x.put("items", itemRes);
         x.put("total_amount", total);
+
+        // ========================
+        // DELIVERY
+        // ========================
+        List<Delivery> deliveries = deliveryDao.findByOrderId(item.getId());
+
+        List<Map<String, Object>> deliveryRes = new ArrayList<>();
+
+        for (Delivery d : deliveries) {
+
+            Map<String, Object> dm = new LinkedHashMap<>(autoBuildAny(d));
+
+            List<DeliveryItem> dis = deliveryItemDao.findByDeliveryId(d.getId());
+
+            dm.put("items", dis);
+
+            deliveryRes.add(dm);
+        }
+
+        x.put("deliveries", deliveryRes);
+
+        // ========================
+        // EXPORT
+        // ========================
+        List<Export> exports = exportDao.findByOrderId(item.getId());
+
+        Set<Integer> exportIds = exports.stream()
+                .map(Export::getId)
+                .collect(Collectors.toSet());
+
+        Map<Integer, List<ExportItem>> exportItemMap =
+                exportIds.isEmpty()
+                        ? Collections.emptyMap()
+                        : exportItemDao.findByExportIds(exportIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(ExportItem::getExportId));
+
+        List<Map<String, Object>> exportRes = new ArrayList<>();
+
+        for (Export e : exports) {
+
+            Map<String, Object> em = new LinkedHashMap<>(autoBuildAny(e));
+
+            List<ExportItem> eis = exportItemMap.getOrDefault(e.getId(), List.of());
+
+            List<Map<String, Object>> eisRes = new ArrayList<>();
+
+            for (ExportItem ei : eis) {
+
+                Map<String, Object> im = new LinkedHashMap<>(autoBuildAny(ei));
+
+                Product p = productMap.get(ei.getProductId());
+                if (p != null) {
+                    im.put("product", productBuilder.buildItem(p));
+                }
+
+                eisRes.add(im);
+            }
+
+            em.put("items", eisRes);
+
+            exportRes.add(em);
+        }
+
+        x.put("exports", exportRes);
+
+        // ========================
+        // AR SUMMARY
+        // ========================
+        Map<String, Object> arSummary = arLedgerDao.summaryByOrder(item.getId());
+
+        x.put("ar_summary", arSummary);
 
         return x;
     }
