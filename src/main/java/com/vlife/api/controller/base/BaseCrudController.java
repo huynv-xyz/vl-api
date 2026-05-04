@@ -65,6 +65,26 @@ public abstract class BaseCrudController<
         );
     }
 
+    protected Map<String, Object> buildPagedMapResponse(
+            int page,
+            int size,
+            long total,
+            List<?> items
+    ) {
+        int totalPage = total == 0
+                ? 0
+                : (int) Math.ceil((double) total / size);
+
+        return Map.of(
+                "page", page,
+                "size", size,
+                "total", total,
+                "current_page", page,
+                "total_page", totalPage,
+                "items", items
+        );
+    }
+
     // ======================
     // READ
     // ======================

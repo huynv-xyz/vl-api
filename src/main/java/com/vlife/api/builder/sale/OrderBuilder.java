@@ -5,12 +5,15 @@ import com.vlife.shared.api.builder.ItemBuilder;
 import com.vlife.shared.jdbc.dao.CustomerDao;
 import com.vlife.shared.jdbc.dao.EmployeeDao;
 import com.vlife.shared.jdbc.dao.ProductDao;
+import com.vlife.shared.jdbc.dao.WarehouseDao;
 import com.vlife.shared.jdbc.dao.sale.*;
 import com.vlife.shared.jdbc.entity.Customer;
 import com.vlife.shared.jdbc.entity.Employee;
 import com.vlife.shared.jdbc.entity.Product;
+import com.vlife.shared.jdbc.entity.Warehouse;
 import com.vlife.shared.jdbc.entity.sale.*;
 import com.vlife.shared.util.CommonUtil;
+import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 
 import java.math.BigDecimal;
@@ -30,8 +33,16 @@ public class OrderBuilder extends ItemBuilder<Order> {
 
     private final ArLedgerDao arLedgerDao;
     private final OrderItemDao orderItemDao;
+    private final ReceiptDao receiptDao;
+
     private final ProductDao productDao;
     private final ProductBuilder productBuilder;
+
+    @Inject
+    DeliveryItemBuilder deliveryItemBuilder;
+
+    @Inject
+    WarehouseDao warehouseDao;
 
     public OrderBuilder(
             CustomerDao customerDao,
@@ -39,13 +50,12 @@ public class OrderBuilder extends ItemBuilder<Order> {
             OrderItemDao orderItemDao,
             ProductDao productDao,
             ProductBuilder productBuilder,
-
-            // 👇 thêm
             DeliveryDao deliveryDao,
             DeliveryItemDao deliveryItemDao,
             ExportDao exportDao,
             ExportItemDao exportItemDao,
-            ArLedgerDao arLedgerDao
+            ArLedgerDao arLedgerDao,
+            ReceiptDao receiptDao
     ) {
         this.customerDao = customerDao;
         this.employeeDao = employeeDao;
@@ -53,26 +63,20 @@ public class OrderBuilder extends ItemBuilder<Order> {
         this.productDao = productDao;
         this.productBuilder = productBuilder;
 
-        // 👇 init
         this.deliveryDao = deliveryDao;
         this.deliveryItemDao = deliveryItemDao;
         this.exportDao = exportDao;
         this.exportItemDao = exportItemDao;
         this.arLedgerDao = arLedgerDao;
+        this.receiptDao = receiptDao;
     }
 
-    // ========================
-    // BUILD SINGLE (DETAIL)
-    // ========================
     @Override
-    public Map<String, Object> buildItem(Order item) {
+    public Map<String, Object> buildItemFull(Order item) {
         if (item == null) return Map.of();
 
         Map<String, Object> x = new LinkedHashMap<>(autoBuild(item));
 
-        // ========================
-        // CUSTOMER + EMPLOYEE
-        // ========================
         Customer customer = item.getCustomerId() != null
                 ? customerDao.findById(item.getCustomerId()).orElse(null)
                 : null;
@@ -84,10 +88,9 @@ public class OrderBuilder extends ItemBuilder<Order> {
         x.put("customer", customer);
         x.put("employee", employee);
 
-        // ========================
-        // ORDER ITEMS
-        // ========================
         List<OrderItem> items = orderItemDao.findByOrderId(item.getId());
+        List<Delivery> deliveries = deliveryDao.findByOrderId(item.getId());
+        List<Export> exports = exportDao.findByOrderId(item.getId());
 
         Set<Integer> productIds = items.stream()
                 .map(OrderItem::getProductId)
@@ -99,9 +102,27 @@ public class OrderBuilder extends ItemBuilder<Order> {
                         ? Collections.emptyMap()
                         : productDao.findByIdsAsMap(productIds);
 
-        // ===== exported map
+        Set<Integer> warehouseIds = new HashSet<>();
+
+        for (Delivery d : deliveries) {
+            if (d.getWarehouseId() != null) {
+                warehouseIds.add(d.getWarehouseId());
+            }
+        }
+
+        for (Export e : exports) {
+            if (e.getWarehouseId() != null) {
+                warehouseIds.add(e.getWarehouseId());
+            }
+        }
+
         Map<Integer, BigDecimal> exportedMap =
                 exportItemDao.sumExportedByOrderId(item.getId());
+
+        Map<Integer, Warehouse> warehouseMap =
+                warehouseIds.isEmpty()
+                        ? Collections.emptyMap()
+                        : warehouseDao.findByIdsAsMap(warehouseIds);
 
         List<Map<String, Object>> itemRes = new ArrayList<>();
 
@@ -145,27 +166,22 @@ public class OrderBuilder extends ItemBuilder<Order> {
         // ========================
         // DELIVERY
         // ========================
-        List<Delivery> deliveries = deliveryDao.findByOrderId(item.getId());
 
         List<Map<String, Object>> deliveryRes = new ArrayList<>();
 
         for (Delivery d : deliveries) {
 
             Map<String, Object> dm = new LinkedHashMap<>(autoBuildAny(d));
+            dm.put("warehouse", warehouseMap.get(d.getWarehouseId()));
 
             List<DeliveryItem> dis = deliveryItemDao.findByDeliveryId(d.getId());
 
-            dm.put("items", dis);
+            dm.put("items", deliveryItemBuilder.buildList(dis));
 
             deliveryRes.add(dm);
         }
 
         x.put("deliveries", deliveryRes);
-
-        // ========================
-        // EXPORT
-        // ========================
-        List<Export> exports = exportDao.findByOrderId(item.getId());
 
         Set<Integer> exportIds = exports.stream()
                 .map(Export::getId)
@@ -183,6 +199,7 @@ public class OrderBuilder extends ItemBuilder<Order> {
         for (Export e : exports) {
 
             Map<String, Object> em = new LinkedHashMap<>(autoBuildAny(e));
+            em.put("warehouse", warehouseMap.get(e.getWarehouseId()));
 
             List<ExportItem> eis = exportItemMap.getOrDefault(e.getId(), List.of());
 
@@ -207,9 +224,17 @@ public class OrderBuilder extends ItemBuilder<Order> {
 
         x.put("exports", exportRes);
 
-        // ========================
-        // AR SUMMARY
-        // ========================
+        List<Receipt> receipts = receiptDao.findByOrderId(item.getId());
+
+        List<Map<String, Object>> receiptRes = new ArrayList<>();
+
+        for (Receipt r : receipts) {
+            Map<String, Object> rm = new LinkedHashMap<>(autoBuildAny(r));
+            receiptRes.add(rm);
+        }
+
+        x.put("receipts", receiptRes);
+
         Map<String, Object> arSummary = arLedgerDao.summaryByOrder(item.getId());
 
         x.put("ar_summary", arSummary);
@@ -217,9 +242,6 @@ public class OrderBuilder extends ItemBuilder<Order> {
         return x;
     }
 
-    // ========================
-    // BUILD LIST (OPTIMIZE)
-    // ========================
     @Override
     public List<Map<String, Object>> buildList(List<Order> items) {
 

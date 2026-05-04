@@ -4,11 +4,13 @@ import com.vlife.api.builder.ProductBuilder;
 import com.vlife.api.util.ApiUtil;
 import com.vlife.shared.api.builder.ItemBuilder;
 import com.vlife.shared.jdbc.dao.ProductDao;
+import com.vlife.shared.jdbc.dao.WarehouseDao;
 import com.vlife.shared.jdbc.dao.purchasing.ContractDao;
 import com.vlife.shared.jdbc.dao.purchasing.ContractItemDao;
 import com.vlife.shared.jdbc.dao.purchasing.PortDao;
 import com.vlife.shared.jdbc.dao.purchasing.ShipmentItemDao;
 import com.vlife.shared.jdbc.entity.Product;
+import com.vlife.shared.jdbc.entity.Warehouse;
 import com.vlife.shared.jdbc.entity.purchasing.*;
 import com.vlife.shared.service.purchasing.ShipmentService;
 import com.vlife.shared.util.CommonUtil;
@@ -33,6 +35,8 @@ public class ShipmentBuilder extends ItemBuilder<Shipment> {
     private final PortDao portDao;
     private final PortBuilder portBuilder;
 
+    private final WarehouseDao warehouseDao;
+
     public ShipmentBuilder(
             ShipmentItemDao shipmentItemDao,
             ProductDao productDao,
@@ -41,7 +45,8 @@ public class ShipmentBuilder extends ItemBuilder<Shipment> {
             ContractItemDao contractItemDao,
             ShipmentService shipmentService,
             PortDao portDao,
-            PortBuilder portBuilder
+            PortBuilder portBuilder,
+            WarehouseDao warehouseDao
     ) {
         this.shipmentItemDao = shipmentItemDao;
         this.productDao = productDao;
@@ -51,6 +56,7 @@ public class ShipmentBuilder extends ItemBuilder<Shipment> {
         this.shipmentService = shipmentService;
         this.portDao = portDao;
         this.portBuilder = portBuilder;
+        this.warehouseDao = warehouseDao;
     }
 
     @Override
@@ -59,10 +65,6 @@ public class ShipmentBuilder extends ItemBuilder<Shipment> {
         if (CommonUtil.isNullOrEmpty(shipments)) {
             return Collections.emptyList();
         }
-
-        // ========================
-        // 1. LOAD ALL DATA (NO N+1)
-        // ========================
 
         Set<Integer> shipmentIds = shipments.stream()
                 .map(Shipment::getId)
@@ -111,11 +113,26 @@ public class ShipmentBuilder extends ItemBuilder<Shipment> {
                         ? Collections.emptyMap()
                         : portDao.findByIdsAsMap(portIds);
 
+        Set<Integer> warehouseIds = shipments.stream()
+                .map(Shipment::getWarehouseId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        Map<Integer, Warehouse> warehouseMap =
+                warehouseIds.isEmpty()
+                        ? Collections.emptyMap()
+                        : warehouseDao.findByIdsAsMap(warehouseIds);
+
         List<Map<String, Object>> result = new ArrayList<>(shipments.size());
 
         for (Shipment s : shipments) {
 
             Map<String, Object> x = new LinkedHashMap<>(autoBuild(s));
+
+            Port port = portMap.get(s.getDestinationPortId());
+            x.put("destination_port", port != null ? portBuilder.buildItem(port) : null);
+
+            x.put("warehouse", warehouseMap.get(s.getWarehouseId()));
 
             List<ShipmentItem> its =
                     itemMap.getOrDefault(s.getId(), Collections.emptyList());
@@ -143,16 +160,9 @@ public class ShipmentBuilder extends ItemBuilder<Shipment> {
                     m.put("product", productBuilder.buildItem(p));
                 }
 
-                Port port = portMap.get(s.getDestinationPortId());
-
-                x.put("destination_port",
-                        port != null ? portBuilder.buildItem(port) : null
-                );
-
                 ContractItem ci = contractItemMap.get(i.getProductId());
 
                 if (ci != null) {
-
                     var price = shipmentService.calcPrice(i, ci, vatRate, importRate);
 
                     m.put("discount_amount", price.discount());
@@ -162,7 +172,6 @@ public class ShipmentBuilder extends ItemBuilder<Shipment> {
                     m.put("total_price", price.total());
 
                     total = total.add(price.total());
-
                 } else {
                     m.put("total_price", BigDecimal.ZERO);
                 }

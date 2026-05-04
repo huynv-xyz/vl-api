@@ -4,10 +4,12 @@ import com.vlife.api.builder.ProductBuilder;
 import com.vlife.api.util.ApiUtil;
 import com.vlife.shared.api.builder.ItemBuilder;
 import com.vlife.shared.jdbc.dao.ProductDao;
+import com.vlife.shared.jdbc.dao.WarehouseDao;
 import com.vlife.shared.jdbc.dao.purchasing.ContractDao;
 import com.vlife.shared.jdbc.dao.purchasing.PortDao;
 import com.vlife.shared.jdbc.dao.purchasing.ShipmentDao;
 import com.vlife.shared.jdbc.entity.Product;
+import com.vlife.shared.jdbc.entity.Warehouse;
 import com.vlife.shared.jdbc.entity.purchasing.Contract;
 import com.vlife.shared.jdbc.entity.purchasing.Port;
 import com.vlife.shared.jdbc.entity.purchasing.Shipment;
@@ -30,7 +32,7 @@ public class ShipmentItemBuilder extends ItemBuilder<ShipmentItem> {
     private final PortDao portDao;
     private final PortBuilder portBuilder;
     private final ShipmentBuilder shipmentBuilder;
-
+    private final WarehouseDao warehouseDao;
 
     public ShipmentItemBuilder(
             ProductDao productDao,
@@ -39,8 +41,8 @@ public class ShipmentItemBuilder extends ItemBuilder<ShipmentItem> {
             ContractDao contractDao,
             PortDao portDao,
             PortBuilder portBuilder,
-            ShipmentBuilder shipmentBuilder
-
+            ShipmentBuilder shipmentBuilder,
+            WarehouseDao warehouseDao
     ) {
         this.productDao = productDao;
         this.productBuilder = productBuilder;
@@ -49,6 +51,7 @@ public class ShipmentItemBuilder extends ItemBuilder<ShipmentItem> {
         this.portDao = portDao;
         this.portBuilder = portBuilder;
         this.shipmentBuilder = shipmentBuilder;
+        this.warehouseDao = warehouseDao;
     }
 
     @Override
@@ -101,6 +104,16 @@ public class ShipmentItemBuilder extends ItemBuilder<ShipmentItem> {
                         ? Collections.emptyMap()
                         : portDao.findByIdsAsMap(portIds);
 
+        Set<Integer> warehouseIds = shipmentMap.values().stream()
+                .map(Shipment::getWarehouseId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        Map<Integer, Warehouse> warehouseMap =
+                warehouseIds.isEmpty()
+                        ? Collections.emptyMap()
+                        : warehouseDao.findByIdsAsMap(warehouseIds);
+
         List<Map<String, Object>> result = new ArrayList<>();
 
         for (ShipmentItem i : items) {
@@ -120,6 +133,10 @@ public class ShipmentItemBuilder extends ItemBuilder<ShipmentItem> {
                 if(port != null) {
                     shipmentBuild.put("destination_port" , portBuilder.buildItem(port));
                 }
+
+                Warehouse warehouse = warehouseMap.get(s.getWarehouseId());
+
+                shipmentBuild.put("warehouse", warehouse);
 
                 x.put("shipment" , shipmentBuild);
             }

@@ -4,7 +4,7 @@ import com.vlife.api.builder.ProductBuilder;
 import com.vlife.shared.api.builder.ItemBuilder;
 import com.vlife.shared.jdbc.dao.ProductDao;
 import com.vlife.shared.jdbc.entity.Product;
-import com.vlife.shared.jdbc.entity.sale.DeliveryItem;
+import com.vlife.shared.jdbc.entity.sale.ExportItem;
 import com.vlife.shared.util.CommonUtil;
 import jakarta.inject.Singleton;
 
@@ -12,12 +12,12 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Singleton
-public class DeliveryItemBuilder extends ItemBuilder<DeliveryItem> {
+public class ExportItemBuilder extends ItemBuilder<ExportItem> {
 
     private final ProductDao productDao;
     private final ProductBuilder productBuilder;
 
-    public DeliveryItemBuilder(
+    public ExportItemBuilder(
             ProductDao productDao,
             ProductBuilder productBuilder
     ) {
@@ -25,8 +25,7 @@ public class DeliveryItemBuilder extends ItemBuilder<DeliveryItem> {
         this.productBuilder = productBuilder;
     }
 
-    // ===== DETAIL
-    public Map<String, Object> buildItemFull(DeliveryItem item) {
+    public Map<String, Object> buildItemFull(ExportItem item) {
 
         if (item == null) return Map.of();
 
@@ -42,16 +41,15 @@ public class DeliveryItemBuilder extends ItemBuilder<DeliveryItem> {
         return x;
     }
 
-    // ===== LIST
     @Override
-    public List<Map<String, Object>> buildList(List<DeliveryItem> items) {
+    public List<Map<String, Object>> buildList(List<ExportItem> items) {
 
         if (CommonUtil.isNullOrEmpty(items)) {
             return Collections.emptyList();
         }
 
         Set<Integer> productIds = items.stream()
-                .map(DeliveryItem::getProductId)
+                .map(ExportItem::getProductId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
 
@@ -62,7 +60,7 @@ public class DeliveryItemBuilder extends ItemBuilder<DeliveryItem> {
 
         List<Map<String, Object>> list = new ArrayList<>(items.size());
 
-        for (DeliveryItem item : items) {
+        for (ExportItem item : items) {
 
             Map<String, Object> x = new LinkedHashMap<>(autoBuild(item));
 

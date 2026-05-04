@@ -101,6 +101,7 @@ public class ShipmentController extends BaseCrudController<Shipment, Integer, Sh
         shipment.setEta(parseDate(req.getEta()));
         shipment.setAta(parseDate(req.getAta()));
         shipment.setWarehouseAt(parseDate(req.getWarehouseAt()));
+        shipment.setWarehouseId(req.getWarehouseId());
 
         shipment.setContainerNo(ApiUtil.trim(req.getContainerNo()));
         shipment.setDestinationPortId(req.getDestinationPortId());
@@ -158,6 +159,9 @@ public class ShipmentController extends BaseCrudController<Shipment, Integer, Sh
 
         @JsonProperty("warehouse_at")
         private String warehouseAt;
+
+        @JsonProperty("warehouse_id")
+        private Integer warehouseId;
 
         @JsonProperty("container_no")
         private String containerNo;

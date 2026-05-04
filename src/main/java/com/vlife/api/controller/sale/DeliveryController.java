@@ -231,14 +231,8 @@ public class DeliveryController extends BaseCrudController<Delivery, Integer, De
     @Post("/{id}/confirm")
     @Transactional
     public HttpResponse<?> confirm(@PathVariable Integer id) {
-
-        try {
-            deliveryService.confirmDelivery(id);
-            return HttpResponse.ok(ApiResponse.success(true));
-
-        } catch (Exception e) {
-            return HttpResponse.badRequest(ApiResponse.error(-400, e.getMessage()));
-        }
+        deliveryService.confirmDelivery(id);
+        return HttpResponse.ok(ApiResponse.success(true));
     }
 
     private String generateDeliveryNo() {
