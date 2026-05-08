@@ -38,7 +38,7 @@ public class DeliveryController extends BaseCrudController<Delivery, Integer, De
             DeliveryDao dao,
             DeliveryBuilder builder,
             DeliveryItemDao deliveryItemDao,
-            DeliveryService deliveryService   // 👈 thêm
+            DeliveryService deliveryService
     ) {
         super(dao, builder);
         this.deliveryItemDao = deliveryItemDao;
@@ -228,10 +228,44 @@ public class DeliveryController extends BaseCrudController<Delivery, Integer, De
         return HttpResponse.ok(ApiResponse.success(true));
     }
 
-    @Post("/{id}/confirm")
+    @Put("/{id}/status")
     @Transactional
-    public HttpResponse<?> confirm(@PathVariable Integer id) {
-        deliveryService.confirmDelivery(id);
+    public HttpResponse<?> updateStatus(
+            @PathVariable Integer id,
+            @Body UpdateStatusRequest req
+    ) {
+
+        var opt = dao.findById(id);
+        if (opt.isEmpty()) {
+            return HttpResponse.notFound(ApiResponse.error(-404, "not found"));
+        }
+
+        if (req.getStatus() == null || req.getStatus().isBlank()) {
+            return HttpResponse.badRequest(ApiResponse.error(-400, "status is required"));
+        }
+
+        Delivery old = opt.get();
+        String oldStatus = old.getStatus();
+        String newStatus = req.getStatus();
+
+        if ("DONE".equals(oldStatus)) {
+            return HttpResponse.badRequest(ApiResponse.error(-400, "delivery already DONE"));
+        }
+
+        if ("DELIVERING".equals(newStatus)) {
+            deliveryService.startDelivery(id);
+            return HttpResponse.ok(ApiResponse.success(true));
+        }else if ("DONE".equals(newStatus)) {
+            deliveryService.finishDelivery(id);
+            return HttpResponse.ok(ApiResponse.success(true));
+        }
+
+        Delivery x = new Delivery();
+        x.setStatus(newStatus);
+        x.setUpdatedAt(LocalDateTime.now());
+
+        dao.updateSelective(id, x);
+
         return HttpResponse.ok(ApiResponse.success(true));
     }
 
@@ -291,5 +325,12 @@ public class DeliveryController extends BaseCrudController<Delivery, Integer, De
         private BigDecimal quantity;
 
         private String note;
+    }
+
+    @Setter
+    @Getter
+    @Serdeable
+    public static class UpdateStatusRequest {
+        private String status;
     }
 }

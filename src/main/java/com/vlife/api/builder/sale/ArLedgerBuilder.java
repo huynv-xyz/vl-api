@@ -2,42 +2,32 @@ package com.vlife.api.builder.sale;
 
 import com.vlife.shared.api.builder.ItemBuilder;
 import com.vlife.shared.jdbc.dao.CustomerDao;
-import com.vlife.shared.jdbc.dao.ProductDao;
-import com.vlife.shared.jdbc.dao.sale.ExportDao;
-import com.vlife.shared.jdbc.dao.sale.OrderDao;
+import com.vlife.shared.jdbc.dao.sale.ArLedgerDao;
 import com.vlife.shared.jdbc.entity.Customer;
-import com.vlife.shared.jdbc.entity.Product;
 import com.vlife.shared.jdbc.entity.sale.ArLedger;
-import com.vlife.shared.jdbc.entity.sale.Export;
-import com.vlife.shared.jdbc.entity.sale.Order;
 import com.vlife.shared.util.CommonUtil;
 import jakarta.inject.Singleton;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
 @Singleton
 public class ArLedgerBuilder extends ItemBuilder<ArLedger> {
 
-    private final OrderDao orderDao;
-    private final ExportDao exportDao;
-    private final ProductDao productDao;
     private final CustomerDao customerDao;
+    private final ArLedgerDao arLedgerDao;
 
     public ArLedgerBuilder(
-            OrderDao orderDao,
-            ExportDao exportDao,
-            ProductDao productDao,
-            CustomerDao customerDao
+            CustomerDao customerDao,
+            ArLedgerDao arLedgerDao
     ) {
-        this.orderDao = orderDao;
-        this.exportDao = exportDao;
-        this.productDao = productDao;
         this.customerDao = customerDao;
+        this.arLedgerDao = arLedgerDao;
     }
 
     // ========================
-    // DETAIL
+    // DETAIL (NO N+1)
     // ========================
     @Override
     public Map<String, Object> buildItemFull(ArLedger item) {
@@ -46,35 +36,25 @@ public class ArLedgerBuilder extends ItemBuilder<ArLedger> {
 
         Map<String, Object> x = new LinkedHashMap<>(autoBuild(item));
 
-        x.put("order",
-                item.getOrderId() != null
-                        ? orderDao.findById(item.getOrderId()).orElse(null)
-                        : null
-        );
+        // ===== customer
+        Customer customer = item.getCustomerId() != null
+                ? customerDao.findById(item.getCustomerId()).orElse(null)
+                : null;
 
-        x.put("export",
-                item.getExportId() != null
-                        ? exportDao.findById(item.getExportId()).orElse(null)
-                        : null
-        );
+        x.put("customer", customer);
 
-        x.put("product",
-                item.getProductId() != null
-                        ? productDao.findById(item.getProductId()).orElse(null)
-                        : null
-        );
+        // ===== type (DEBIT / CREDIT)
+        x.put("type", resolveType(item));
 
-        x.put("customer",
-                item.getCustomerId() != null
-                        ? customerDao.findById(item.getCustomerId()).orElse(null)
-                        : null
-        );
+        // ===== balance (optional)
+        BigDecimal balance = arLedgerDao.getBalance(item.getCustomerId());
+        x.put("balance", balance);
 
         return x;
     }
 
     // ========================
-    // LIST
+    // LIST (BATCH)
     // ========================
     @Override
     public List<Map<String, Object>> buildList(List<ArLedger> items) {
@@ -83,45 +63,61 @@ public class ArLedgerBuilder extends ItemBuilder<ArLedger> {
             return Collections.emptyList();
         }
 
-        Set<Integer> orderIds = items.stream()
-                .map(ArLedger::getOrderId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-
-        Set<Integer> exportIds = items.stream()
-                .map(ArLedger::getExportId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-
-        Set<Integer> productIds = items.stream()
-                .map(ArLedger::getProductId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-
+        // ===== collect ids
         Set<Integer> customerIds = items.stream()
                 .map(ArLedger::getCustomerId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
 
-        Map<Integer, Order> orderMap = orderDao.findByIdsAsMap(orderIds);
-        Map<Integer, Export> exportMap = exportDao.findByIdsAsMap(exportIds);
-        Map<Integer, Product> productMap = productDao.findByIdsAsMap(productIds);
-        Map<Integer, Customer> customerMap = customerDao.findByIdsAsMap(customerIds);
+        // ===== batch load
+        Map<Integer, Customer> customerMap =
+                customerDao.findByIdsAsMap(customerIds);
 
         List<Map<String, Object>> list = new ArrayList<>(items.size());
 
         for (ArLedger item : items) {
 
             Map<String, Object> x = new LinkedHashMap<>(autoBuild(item));
+            x.put("posting_date", item.getPostingDate());
 
-            x.put("order", orderMap.get(item.getOrderId()));
-            x.put("export", exportMap.get(item.getExportId()));
-            x.put("product", productMap.get(item.getProductId()));
             x.put("customer", customerMap.get(item.getCustomerId()));
+
+            // ===== type
+            x.put("type", resolveType(item));
+
+            // ===== simple label
+            x.put("display_type", mapDisplayType(item.getSourceType()));
 
             list.add(x);
         }
 
         return list;
+    }
+
+    // ========================
+    // HELPERS
+    // ========================
+    private String resolveType(ArLedger x) {
+        if (x.getDebitAmount() != null &&
+                x.getDebitAmount().compareTo(BigDecimal.ZERO) > 0) {
+            return "DEBIT";
+        }
+        if (x.getCreditAmount() != null &&
+                x.getCreditAmount().compareTo(BigDecimal.ZERO) > 0) {
+            return "CREDIT";
+        }
+        return "UNKNOWN";
+    }
+
+    private String mapDisplayType(String sourceType) {
+        if (sourceType == null) return "-";
+
+        return switch (sourceType) {
+            case "EXPORT" -> "Bán hàng";
+            case "RECEIPT" -> "Thu tiền";
+            case "ADJUST" -> "Điều chỉnh";
+            case "IMPORT" -> "Import";
+            default -> sourceType;
+        };
     }
 }

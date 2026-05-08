@@ -1,12 +1,12 @@
 package com.vlife.api.controller.sale;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.vlife.api.builder.sale.ArLedgerBuilder;
+import com.vlife.api.builder.sale.CashBankLedgerBuilder;
 import com.vlife.api.controller.base.BaseCrudController;
 import com.vlife.api.util.ApiUtil;
 import com.vlife.shared.api.dto.ApiResponse;
-import com.vlife.shared.jdbc.dao.sale.ArLedgerDao;
-import com.vlife.shared.jdbc.entity.sale.ArLedger;
+import com.vlife.shared.jdbc.dao.sale.CashBankLedgerDao;
+import com.vlife.shared.jdbc.entity.sale.CashBankLedger;
 import com.vlife.shared.service.sale.ArLedgerImportService;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
@@ -22,27 +22,30 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Map;
 
-@Controller("/sales/ar-ledgers")
-public class ArLedgerController
-        extends BaseCrudController<ArLedger, Integer, ArLedgerDao> {
+@Controller("/sales/cash-bank-ledger")
+public class CashBankLedgerController
+        extends BaseCrudController<CashBankLedger, Integer, CashBankLedgerDao> {
 
     private final ArLedgerImportService importService;
 
     @Inject
-    public ArLedgerController(
-            ArLedgerDao dao,
-            ArLedgerBuilder builder,
+    public CashBankLedgerController(
+            CashBankLedgerDao dao,
+            CashBankLedgerBuilder builder,
             ArLedgerImportService importService
     ) {
         super(dao, builder);
         this.importService = importService;
     }
 
+    // ========================
+    // SEARCH
+    // ========================
     @Override
-    protected Page<ArLedger> doSearch(Map<String, String> filters, Pageable pageable) {
+    protected Page<CashBankLedger> doSearch(Map<String, String> filters, Pageable pageable) {
         return dao.search(
+                ApiUtil.trim(filters.get("keyword")),
                 ApiUtil.parseInteger(filters.get("customer_id")),
-                ApiUtil.trim(filters.get("source_type")),
                 ApiUtil.toDate(filters.get("from_date")),
                 ApiUtil.toDate(filters.get("to_date")),
                 pageable
@@ -55,14 +58,15 @@ public class ArLedgerController
     @Post
     public HttpResponse<?> create(@Body LedgerRequest req) {
 
-        // validate
-        if (isZero(req.getDebitAmount()) && isZero(req.getCreditAmount())) {
+        if ((req.getDebitAmount() == null || req.getDebitAmount().compareTo(BigDecimal.ZERO) == 0)
+                && (req.getCreditAmount() == null || req.getCreditAmount().compareTo(BigDecimal.ZERO) == 0)) {
+
             return HttpResponse.badRequest(
                     ApiResponse.error(-400, "Phải có debit hoặc credit")
             );
         }
 
-        ArLedger x = new ArLedger();
+        CashBankLedger x = new CashBankLedger();
 
         x.setPostingDate(ApiUtil.toDate(req.getPostingDate()));
         x.setDocDate(ApiUtil.toDate(req.getDocDate()));
@@ -74,8 +78,8 @@ public class ArLedgerController
         x.setDescription(req.getDescription());
         x.setAccountCode(req.getAccountCode());
 
-        x.setDebitAmount(defaultZero(req.getDebitAmount()));
-        x.setCreditAmount(defaultZero(req.getCreditAmount()));
+        x.setDebitAmount(req.getDebitAmount() != null ? req.getDebitAmount() : BigDecimal.ZERO);
+        x.setCreditAmount(req.getCreditAmount() != null ? req.getCreditAmount() : BigDecimal.ZERO);
 
         x.setSourceType(req.getSourceType());
         x.setSourceId(req.getSourceId());
@@ -103,7 +107,7 @@ public class ArLedgerController
             return HttpResponse.ok(ApiResponse.error(-404, "not found"));
         }
 
-        ArLedger x = new ArLedger();
+        CashBankLedger x = new CashBankLedger();
 
         x.setPostingDate(ApiUtil.toDate(req.getPostingDate()));
         x.setDocDate(ApiUtil.toDate(req.getDocDate()));
@@ -125,16 +129,13 @@ public class ArLedgerController
 
         dao.updateSelective(id, x);
 
-        ArLedger updated = dao.findById(id).orElse(null);
+        CashBankLedger updated = dao.findById(id).orElse(null);
 
         return HttpResponse.ok(
                 ApiResponse.success(builder.buildItemFull(updated))
         );
     }
 
-    // ========================
-    // IMPORT CSV
-    // ========================
     @Post(value = "/import", consumes = "multipart/form-data")
     public HttpResponse<?> importCsv(@Part("file") CompletedFileUpload file) {
 
@@ -156,17 +157,6 @@ public class ArLedgerController
                     ApiResponse.error(-500, e.getMessage())
             );
         }
-    }
-
-    // ========================
-    // HELPERS
-    // ========================
-    private boolean isZero(BigDecimal x) {
-        return x == null || x.compareTo(BigDecimal.ZERO) == 0;
-    }
-
-    private BigDecimal defaultZero(BigDecimal x) {
-        return x != null ? x : BigDecimal.ZERO;
     }
 
     // ========================

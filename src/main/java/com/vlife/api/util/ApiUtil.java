@@ -9,6 +9,21 @@ import java.time.OffsetDateTime;
 
 public class ApiUtil {
 
+    public static Boolean parseBoolean(String value) {
+        if (value == null || value.isBlank()) return null;
+
+        String v = value.trim().toLowerCase();
+
+        if ("true".equals(v) || "1".equals(v) || "yes".equals(v)) {
+            return true;
+        }
+
+        if ("false".equals(v) || "0".equals(v) || "no".equals(v)) {
+            return false;
+        }
+
+        return null;
+    }
 
     public static Long parseLong(String v) {
         if (v == null || v.isBlank()) return null;

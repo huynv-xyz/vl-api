@@ -235,10 +235,6 @@ public class OrderBuilder extends ItemBuilder<Order> {
 
         x.put("receipts", receiptRes);
 
-        Map<String, Object> arSummary = arLedgerDao.summaryByOrder(item.getId());
-
-        x.put("ar_summary", arSummary);
-
         return x;
     }
 

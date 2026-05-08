@@ -21,6 +21,7 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 @Controller("/inventory/lots")
@@ -52,6 +53,21 @@ public class InventoryLotController extends BaseCrudController<InventoryLot, Int
                 Boolean.parseBoolean(filters.getOrDefault("only_remaining", "false")),
                 pageable
         );
+    }
+
+    @Get("/stock")
+    public HttpResponse<?> getStock(
+            @QueryValue("warehouse_id") Integer warehouseId,
+            @QueryValue("product_ids") List<Integer> productIds
+    ) {
+
+        if (warehouseId == null || productIds == null || productIds.isEmpty()) {
+            return HttpResponse.badRequest(ApiResponse.error(-400, "invalid params"));
+        }
+
+        var data = dao.sumRemainingByProducts(warehouseId, productIds);
+
+        return HttpResponse.ok(ApiResponse.success(data));
     }
 
     @Post

@@ -5,10 +5,8 @@ import com.vlife.shared.api.builder.ItemBuilder;
 import com.vlife.shared.jdbc.dao.ProductDao;
 import com.vlife.shared.jdbc.dao.WarehouseDao;
 import com.vlife.shared.jdbc.dao.production.*;
-import com.vlife.shared.jdbc.dao.sale.InventoryLotDao;
 import com.vlife.shared.jdbc.entity.Product;
 import com.vlife.shared.jdbc.entity.Warehouse;
-import com.vlife.shared.jdbc.entity.inventory.InventoryLot;
 import com.vlife.shared.jdbc.entity.production.*;
 import com.vlife.shared.util.CommonUtil;
 import jakarta.inject.Singleton;
@@ -19,190 +17,425 @@ import java.util.stream.Collectors;
 @Singleton
 public class ProductionOrderBuilder extends ItemBuilder<ProductionOrder> {
 
+    private final ProductionOrderItemDao itemDao;
+
     private final ProductionMaterialDao materialDao;
-    private final ProductionOutputDao outputDao;
     private final ProductionExtraItemDao extraDao;
     private final ProductionSubstitutionDao substitutionDao;
+    private final ProductionOutputDao outputDao;
 
     private final ProductDao productDao;
     private final ProductBuilder productBuilder;
+
     private final WarehouseDao warehouseDao;
-    private final InventoryLotDao inventoryLotDao;
 
     public ProductionOrderBuilder(
+            ProductionOrderItemDao itemDao,
             ProductionMaterialDao materialDao,
-            ProductionOutputDao outputDao,
             ProductionExtraItemDao extraDao,
             ProductionSubstitutionDao substitutionDao,
+            ProductionOutputDao outputDao,
             ProductDao productDao,
             ProductBuilder productBuilder,
-            WarehouseDao warehouseDao,
-            InventoryLotDao inventoryLotDao
+            WarehouseDao warehouseDao
     ) {
+        this.itemDao = itemDao;
         this.materialDao = materialDao;
-        this.outputDao = outputDao;
         this.extraDao = extraDao;
         this.substitutionDao = substitutionDao;
+        this.outputDao = outputDao;
         this.productDao = productDao;
         this.productBuilder = productBuilder;
         this.warehouseDao = warehouseDao;
-        this.inventoryLotDao = inventoryLotDao;
     }
 
     @Override
     public Map<String, Object> buildItemFull(ProductionOrder item) {
         if (item == null) return Map.of();
-        return buildList(Collections.singletonList(item)).get(0);
+
+        List<Map<String, Object>> rs = buildList(List.of(item));
+        return rs.isEmpty() ? Map.of() : rs.get(0);
     }
 
     @Override
-    public List<Map<String, Object>> buildList(List<ProductionOrder> items) {
-        if (CommonUtil.isNullOrEmpty(items)) {
-            return Collections.emptyList();
+    public List<Map<String, Object>> buildList(List<ProductionOrder> orders) {
+
+        if (CommonUtil.isNullOrEmpty(orders)) {
+            return List.of();
         }
 
-        Set<Integer> orderIds = items.stream()
+        // =====================================================
+        // ORDER IDS
+        // =====================================================
+
+        Set<Integer> orderIds = orders.stream()
                 .map(ProductionOrder::getId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
 
-        Map<Integer, List<ProductionMaterial>> materialMap =
-                materialDao.findByProductionOrderIds(orderIds)
-                        .stream()
-                        .collect(Collectors.groupingBy(ProductionMaterial::getProductionId));
+        // =====================================================
+        // ORDER ITEMS
+        // =====================================================
 
-        Map<Integer, List<ProductionOutput>> outputMap =
-                outputDao.findByProductionOrderIds(orderIds)
-                        .stream()
-                        .collect(Collectors.groupingBy(ProductionOutput::getProductId));
+        List<ProductionOrderItem> orderItems =
+                itemDao.findByProductionIds(orderIds);
 
-        Map<Integer, List<ProductionExtraItem>> extraMap =
-                extraDao.findByProductionIds(orderIds)
-                        .stream()
-                        .collect(Collectors.groupingBy(ProductionExtraItem::getProductionId));
+        Map<Integer, List<ProductionOrderItem>> itemMap =
+                orderItems.stream()
+                        .collect(Collectors.groupingBy(
+                                ProductionOrderItem::getProductionId
+                        ));
 
-        Map<Integer, List<ProductionSubstitution>> substitutionMap =
-                substitutionDao.findByProductionIds(orderIds)
-                        .stream()
-                        .collect(Collectors.groupingBy(ProductionSubstitution::getProductionId));
-
-        Set<Integer> productIds = new HashSet<>();
-
-        items.stream()
-                .map(ProductionOrder::getProductId)
-                .filter(Objects::nonNull)
-                .forEach(productIds::add);
-
-        materialMap.values().forEach(list ->
-                list.forEach(i -> {
-                    if (i.getProductId() != null) productIds.add(i.getProductId());
-                })
-        );
-
-        outputMap.values().forEach(list ->
-                list.forEach(i -> {
-                    if (i.getProductId() != null) productIds.add(i.getProductId());
-                })
-        );
-
-        extraMap.values().forEach(list ->
-                list.forEach(i -> {
-                    if (i.getProductId() != null) productIds.add(i.getProductId());
-                })
-        );
-
-        substitutionMap.values().forEach(list ->
-                list.forEach(i -> {
-                    if (i.getOriginalProductId() != null) productIds.add(i.getOriginalProductId());
-                    if (i.getSubstituteProductId() != null) productIds.add(i.getSubstituteProductId());
-                })
-        );
-
-        Map<Integer, Product> productMap =
-                productIds.isEmpty()
-                        ? Collections.emptyMap()
-                        : productDao.findByIdsAsMap(productIds);
-
-        Set<Integer> warehouseIds = items.stream()
-                .map(ProductionOrder::getWarehouseId)
+        Set<Integer> productionItemIds = orderItems.stream()
+                .map(ProductionOrderItem::getId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
 
+        // =====================================================
+        // CHILD TABLES
+        // =====================================================
+
+        Map<Integer, List<ProductionMaterial>> materialMap =
+                materialDao.findByProductionItemIds(productionItemIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(
+                                ProductionMaterial::getProductionItemId
+                        ));
+
+        Map<Integer, List<ProductionExtraItem>> extraMap =
+                extraDao.findByProductionItemIds(productionItemIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(
+                                ProductionExtraItem::getProductionItemId
+                        ));
+
+        Map<Integer, List<ProductionSubstitution>> substitutionMap =
+                substitutionDao.findByProductionItemIds(productionItemIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(
+                                ProductionSubstitution::getProductionItemId
+                        ));
+
+        Map<Integer, List<ProductionOutput>> outputMap =
+                outputDao.findByProductionItemIds(productionItemIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(
+                                ProductionOutput::getProductionItemId
+                        ));
+
+        // =====================================================
+        // LOAD PRODUCT IDS
+        // =====================================================
+
+        Set<Integer> productIds = new HashSet<>();
+        Set<Integer> warehouseIds = new HashSet<>();
+
+        for (ProductionOrderItem i : orderItems) {
+            if (i.getProductId() != null) {
+                productIds.add(i.getProductId());
+            }
+
+            if (i.getWarehouseId() != null) {
+                warehouseIds.add(i.getWarehouseId());
+            }
+        }
+
+        materialMap.values().forEach(list -> {
+            for (ProductionMaterial i : list) {
+
+                if (i.getProductId() != null) {
+                    productIds.add(i.getProductId());
+                }
+
+                if (i.getOriginalProductId() != null) {
+                    productIds.add(i.getOriginalProductId());
+                }
+
+                if (i.getWarehouseId() != null) {
+                    warehouseIds.add(i.getWarehouseId());
+                }
+            }
+        });
+
+        extraMap.values().forEach(list -> {
+            for (ProductionExtraItem i : list) {
+                if (i.getProductId() != null) {
+                    productIds.add(i.getProductId());
+                }
+            }
+        });
+
+        substitutionMap.values().forEach(list -> {
+            for (ProductionSubstitution i : list) {
+
+                if (i.getOriginalProductId() != null) {
+                    productIds.add(i.getOriginalProductId());
+                }
+
+                if (i.getSubstituteProductId() != null) {
+                    productIds.add(i.getSubstituteProductId());
+                }
+            }
+        });
+
+        outputMap.values().forEach(list -> {
+            for (ProductionOutput i : list) {
+
+                if (i.getProductId() != null) {
+                    productIds.add(i.getProductId());
+                }
+
+                if (i.getWarehouseId() != null) {
+                    warehouseIds.add(i.getWarehouseId());
+                }
+            }
+        });
+
+        // =====================================================
+        // LOAD MASTER DATA
+        // =====================================================
+
+        Map<Integer, Product> productMap =
+                productIds.isEmpty()
+                        ? Map.of()
+                        : productDao.findByIdsAsMap(productIds);
+
         Map<Integer, Warehouse> warehouseMap =
                 warehouseIds.isEmpty()
-                        ? Collections.emptyMap()
+                        ? Map.of()
                         : warehouseDao.findByIdsAsMap(warehouseIds);
 
-        Set<Integer> lotIds = new HashSet<>();
-
-        materialMap.values().forEach(list ->
-                list.forEach(i -> {
-                    if (i.getLotId() != null) lotIds.add(i.getLotId());
-                })
-        );
-
-        Map<Integer, InventoryLot> lotMap =
-                lotIds.isEmpty()
-                        ? Collections.emptyMap()
-                        : inventoryLotDao.findByIdsAsMap(lotIds);
+        // =====================================================
+        // BUILD RESPONSE
+        // =====================================================
 
         List<Map<String, Object>> result = new ArrayList<>();
 
-        for (ProductionOrder po : items) {
-            Map<String, Object> x = new LinkedHashMap<>(autoBuild(po));
+        for (ProductionOrder order : orders) {
 
-            Product finishedProduct = productMap.get(po.getProductId());
-            x.put("product", finishedProduct != null ? productBuilder.buildItem(finishedProduct) : null);
-            x.put("warehouse", warehouseMap.get(po.getWarehouseId()));
+            Map<String, Object> x =
+                    new LinkedHashMap<>(autoBuild(order));
 
-            List<Map<String, Object>> materials = new ArrayList<>();
-            for (ProductionMaterial mi : materialMap.getOrDefault(po.getId(), Collections.emptyList())) {
-                Map<String, Object> m = new LinkedHashMap<>(autoBuildAny(mi));
+            List<Map<String, Object>> itemResults = new ArrayList<>();
 
-                Product p = productMap.get(mi.getProductId());
-                m.put("product", p != null ? productBuilder.buildItem(p) : null);
-                m.put("lot", mi.getLotId() != null ? lotMap.get(mi.getLotId()) : null);
+            List<ProductionOrderItem> items =
+                    itemMap.getOrDefault(order.getId(), List.of());
 
-                materials.add(m);
+            for (ProductionOrderItem item : items) {
+
+                Map<String, Object> itemJson =
+                        new LinkedHashMap<>(autoBuildAny(item));
+
+                Product product =
+                        productMap.get(item.getProductId());
+
+                Warehouse warehouse =
+                        warehouseMap.get(item.getWarehouseId());
+
+                itemJson.put(
+                        "product",
+                        product != null
+                                ? productBuilder.buildItem(product)
+                                : null
+                );
+
+                itemJson.put("warehouse", warehouse);
+
+                itemJson.put(
+                        "materials",
+                        buildMaterials(
+                                materialMap.getOrDefault(item.getId(), List.of()),
+                                productMap,
+                                warehouseMap
+                        )
+                );
+
+                itemJson.put(
+                        "extras",
+                        buildExtras(
+                                extraMap.getOrDefault(item.getId(), List.of()),
+                                productMap
+                        )
+                );
+
+                itemJson.put(
+                        "substitutions",
+                        buildSubstitutions(
+                                substitutionMap.getOrDefault(item.getId(), List.of()),
+                                productMap
+                        )
+                );
+
+                itemJson.put(
+                        "outputs",
+                        buildOutputs(
+                                outputMap.getOrDefault(item.getId(), List.of()),
+                                productMap,
+                                warehouseMap
+                        )
+                );
+
+                itemResults.add(itemJson);
             }
 
-            List<Map<String, Object>> outputs = new ArrayList<>();
-            for (ProductionOutput oi : outputMap.getOrDefault(po.getId(), Collections.emptyList())) {
-                Map<String, Object> o = new LinkedHashMap<>(autoBuildAny(oi));
+            x.put("items", itemResults);
 
-                Product p = productMap.get(oi.getProductId());
-                o.put("product", p != null ? productBuilder.buildItem(p) : null);
+            result.add(x);
+        }
 
-                outputs.add(o);
-            }
+        return result;
+    }
 
-            List<Map<String, Object>> extras = new ArrayList<>();
-            for (ProductionExtraItem ei : extraMap.getOrDefault(po.getId(), Collections.emptyList())) {
-                Map<String, Object> e = new LinkedHashMap<>(autoBuildAny(ei));
+    // =====================================================
+    // MATERIALS
+    // =====================================================
 
-                Product p = productMap.get(ei.getProductId());
-                e.put("product", p != null ? productBuilder.buildItem(p) : null);
+    private List<Map<String, Object>> buildMaterials(
+            List<ProductionMaterial> items,
+            Map<Integer, Product> productMap,
+            Map<Integer, Warehouse> warehouseMap
+    ) {
 
-                extras.add(e);
-            }
+        List<Map<String, Object>> result = new ArrayList<>();
 
-            List<Map<String, Object>> substitutions = new ArrayList<>();
-            for (ProductionSubstitution si : substitutionMap.getOrDefault(po.getId(), Collections.emptyList())) {
-                Map<String, Object> s = new LinkedHashMap<>(autoBuildAny(si));
+        for (ProductionMaterial i : items) {
 
-                Product original = productMap.get(si.getOriginalProductId());
-                Product substitute = productMap.get(si.getSubstituteProductId());
+            Map<String, Object> x =
+                    new LinkedHashMap<>(autoBuildAny(i));
 
-                s.put("original_product", original != null ? productBuilder.buildItem(original) : null);
-                s.put("substitute_product", substitute != null ? productBuilder.buildItem(substitute) : null);
+            Product product =
+                    productMap.get(i.getProductId());
 
-                substitutions.add(s);
-            }
+            Product original =
+                    productMap.get(i.getOriginalProductId());
 
-            x.put("materials", materials);
-            x.put("outputs", outputs);
-            x.put("extras", extras);
-            x.put("substitutions", substitutions);
+            x.put(
+                    "product",
+                    product != null
+                            ? productBuilder.buildItem(product)
+                            : null
+            );
+
+            x.put(
+                    "original_product",
+                    original != null
+                            ? productBuilder.buildItem(original)
+                            : null
+            );
+
+            x.put("warehouse", warehouseMap.get(i.getWarehouseId()));
+
+            result.add(x);
+        }
+
+        return result;
+    }
+
+    // =====================================================
+    // EXTRA
+    // =====================================================
+
+    private List<Map<String, Object>> buildExtras(
+            List<ProductionExtraItem> items,
+            Map<Integer, Product> productMap
+    ) {
+
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (ProductionExtraItem i : items) {
+
+            Map<String, Object> x =
+                    new LinkedHashMap<>(autoBuildAny(i));
+
+            Product product =
+                    productMap.get(i.getProductId());
+
+            x.put(
+                    "product",
+                    product != null
+                            ? productBuilder.buildItem(product)
+                            : null
+            );
+
+            result.add(x);
+        }
+
+        return result;
+    }
+
+    // =====================================================
+    // SUBSTITUTIONS
+    // =====================================================
+
+    private List<Map<String, Object>> buildSubstitutions(
+            List<ProductionSubstitution> items,
+            Map<Integer, Product> productMap
+    ) {
+
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (ProductionSubstitution i : items) {
+
+            Map<String, Object> x =
+                    new LinkedHashMap<>(autoBuildAny(i));
+
+            Product original =
+                    productMap.get(i.getOriginalProductId());
+
+            Product substitute =
+                    productMap.get(i.getSubstituteProductId());
+
+            x.put(
+                    "original_product",
+                    original != null
+                            ? productBuilder.buildItem(original)
+                            : null
+            );
+
+            x.put(
+                    "substitute_product",
+                    substitute != null
+                            ? productBuilder.buildItem(substitute)
+                            : null
+            );
+
+            result.add(x);
+        }
+
+        return result;
+    }
+
+    // =====================================================
+    // OUTPUTS
+    // =====================================================
+
+    private List<Map<String, Object>> buildOutputs(
+            List<ProductionOutput> items,
+            Map<Integer, Product> productMap,
+            Map<Integer, Warehouse> warehouseMap
+    ) {
+
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (ProductionOutput i : items) {
+
+            Map<String, Object> x =
+                    new LinkedHashMap<>(autoBuildAny(i));
+
+            Product product =
+                    productMap.get(i.getProductId());
+
+            x.put(
+                    "product",
+                    product != null
+                            ? productBuilder.buildItem(product)
+                            : null
+            );
+
+            x.put(
+                    "warehouse",
+                    warehouseMap.get(i.getWarehouseId())
+            );
 
             result.add(x);
         }
