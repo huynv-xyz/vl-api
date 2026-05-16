@@ -30,14 +30,18 @@ public class ShipmentItemController
                 ApiUtil.trim(filters.get("keyword")),
 
                 ApiUtil.trim(filters.get("status")),                 
-                ApiUtil.parseInteger(filters.get("supplier_id")),    
-                ApiUtil.parseInteger(filters.get("port_id")),        
-                ApiUtil.parseInteger(filters.get("product_id")),     
+                ApiUtil.parseIntegerList(firstNonBlank(filters.get("supplier_ids"), filters.get("supplier_id"))),
+                ApiUtil.parseIntegerList(firstNonBlank(filters.get("port_ids"), filters.get("port_id"))),
+                ApiUtil.parseIntegerList(firstNonBlank(filters.get("product_ids"), filters.get("product_id"))),
 
                 ApiUtil.toDateTime(filters.get("eta_from")),         
                 ApiUtil.toDateTime(filters.get("eta_to")),           
 
                 pageable
         );
+    }
+
+    private static String firstNonBlank(String first, String second) {
+        return first != null && !first.isBlank() ? first : second;
     }
 }

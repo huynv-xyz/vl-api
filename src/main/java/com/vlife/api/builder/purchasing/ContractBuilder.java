@@ -11,6 +11,7 @@ import com.vlife.shared.service.purchasing.ContractService;
 import com.vlife.shared.util.CommonUtil;
 import jakarta.inject.Singleton;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -86,10 +87,13 @@ public class ContractBuilder extends ItemBuilder<Contract> {
 
         x.put("total_quantity", summary.getTotalQuantity());
         x.put("total_amount", summary.getTotalAmount());
+        x.put("total_amount_vnd", summary.getTotalAmountVnd());
         x.put("total_defect_quantity", summary.getTotalDefectQuantity());
         x.put("total_defect_amount", summary.getTotalDefectAmount());
+        x.put("total_defect_amount_vnd", summary.getTotalDefectAmountVnd());
         x.put("real_quantity", summary.getRealQuantity());
         x.put("real_amount", summary.getRealAmount());
+        x.put("real_amount_vnd", summary.getRealAmountVnd());
         x.put("total_paid_amount", summary.getTotalPaidAmount());
         x.put("remaining_amount", summary.getRemainingAmount());
 
@@ -190,11 +194,14 @@ public class ContractBuilder extends ItemBuilder<Contract> {
                             List.of(),
                             List.of(),
                             item.getVatRate(),
-                            item.getImportTaxRate()
+                            item.getImportTaxRate(),
+                            resolveExchangeRate(item, currency),
+                            item.getHandlingFee()
                     );
 
             x.put("total_quantity", summary.getTotalQuantity());
             x.put("total_amount", summary.getTotalAmount());
+            x.put("total_amount_vnd", summary.getTotalAmountVnd());
 
             list.add(x);
         }
@@ -209,5 +216,16 @@ public class ContractBuilder extends ItemBuilder<Contract> {
         x.put("nation", nation != null ? nationBuilder.buildItem(nation) : null);
 
         return x;
+    }
+
+    private BigDecimal resolveExchangeRate(Contract contract, Currency currency) {
+        if (contract != null && contract.getExchangeRate() != null && contract.getExchangeRate().compareTo(BigDecimal.ZERO) > 0) {
+            return contract.getExchangeRate();
+        }
+
+        if (currency == null || currency.getExchangeRate() == null || currency.getExchangeRate() <= 0) {
+            return BigDecimal.ONE;
+        }
+        return BigDecimal.valueOf(currency.getExchangeRate());
     }
 }

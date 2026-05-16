@@ -147,6 +147,11 @@ public class ShipmentBuilder extends ItemBuilder<Shipment> {
 
             BigDecimal vatRate = contract != null ? ApiUtil.nvl(contract.getVatRate()) : BigDecimal.ZERO;
             BigDecimal importRate = contract != null ? ApiUtil.nvl(contract.getImportTaxRate()) : BigDecimal.ZERO;
+            BigDecimal handlingFee = contract != null ? ApiUtil.nvl(contract.getHandlingFee()) : BigDecimal.ZERO;
+            BigDecimal exchangeRate = s.getExchangeRate() != null
+                    && s.getExchangeRate().compareTo(BigDecimal.ZERO) > 0
+                    ? s.getExchangeRate()
+                    : BigDecimal.ONE;
 
             BigDecimal total = BigDecimal.ZERO;
             List<Map<String, Object>> itemRes = new ArrayList<>();
@@ -163,9 +168,11 @@ public class ShipmentBuilder extends ItemBuilder<Shipment> {
                 ContractItem ci = contractItemMap.get(i.getProductId());
 
                 if (ci != null) {
-                    var price = shipmentService.calcPrice(i, ci, vatRate, importRate);
+                    var price = shipmentService.calcPrice(i, ci, vatRate, importRate, exchangeRate, handlingFee);
 
                     m.put("discount_amount", price.discount());
+                    m.put("handling_fee", handlingFee);
+                    m.put("exchange_rate", exchangeRate);
                     m.put("import_tax", price.importTax());
                     m.put("vat_amount", price.vat());
                     m.put("final_price", price.finalPrice());

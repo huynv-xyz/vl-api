@@ -48,8 +48,14 @@ micronaut:
 
 datasources:
   default:
-    url: jdbc:mysql://127.0.0.1:3306/vlife2?noAccessToProcedureBodies=true&useSSL=false&useUnicode=true&characterEncoding=UTF-8
+    url: jdbc:mysql://127.0.0.1:3306/vlife2?noAccessToProcedureBodies=true&useSSL=false&useUnicode=true&characterEncoding=UTF-8&connectTimeout=10000&socketTimeout=30000
     driverClassName: com.mysql.cj.jdbc.Driver
     username: root
     password: 123456
     dialect: MYSQL
+    maximum-pool-size: 10
+    minimum-idle: 1
+    connection-timeout: 10000
+    idle-timeout: 300000
+    max-lifetime: 1800000
+    leak-detection-threshold: 15000

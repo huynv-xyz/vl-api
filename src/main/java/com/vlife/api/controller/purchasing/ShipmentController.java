@@ -42,8 +42,8 @@ public class ShipmentController extends BaseCrudController<Shipment, Integer, Sh
                 ApiUtil.trim(filters.get("status")),
 
                 ApiUtil.parseInteger(filters.get("supplier_id")),
-                ApiUtil.parseInteger(filters.get("product_id")),          // 🔥 thêm
-                ApiUtil.parseInteger(filters.get("port_id")),             // 🔥 thêm
+                ApiUtil.parseInteger(filters.get("product_id")),
+                ApiUtil.parseInteger(filters.get("port_id")),
 
                 ApiUtil.toDateTime(filters.get("eta_from")),
                 ApiUtil.toDateTime(filters.get("eta_to")),

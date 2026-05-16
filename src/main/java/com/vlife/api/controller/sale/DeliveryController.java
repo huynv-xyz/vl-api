@@ -7,9 +7,14 @@ import com.vlife.api.util.ApiUtil;
 import com.vlife.shared.api.dto.ApiResponse;
 import com.vlife.shared.jdbc.dao.sale.DeliveryDao;
 import com.vlife.shared.jdbc.dao.sale.DeliveryItemDao;
+import com.vlife.shared.jdbc.dao.sale.OrderDao;
+import com.vlife.shared.jdbc.dao.sale.OrderItemDao;
 import com.vlife.shared.jdbc.entity.sale.Delivery;
 import com.vlife.shared.jdbc.entity.sale.DeliveryItem;
+import com.vlife.shared.jdbc.entity.sale.Order;
+import com.vlife.shared.jdbc.entity.sale.OrderItem;
 import com.vlife.shared.service.sale.DeliveryService;
+import com.vlife.shared.service.sale.ExportService;
 import com.vlife.shared.util.CommonUtil;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
@@ -32,6 +37,15 @@ public class DeliveryController extends BaseCrudController<Delivery, Integer, De
     private final DeliveryItemDao deliveryItemDao;
 
     private final DeliveryService deliveryService;
+
+    @Inject
+    private ExportService exportService;
+
+    @Inject
+    private OrderDao orderDao;
+
+    @Inject
+    private OrderItemDao orderItemDao;
 
     @Inject
     public DeliveryController(
@@ -60,62 +74,40 @@ public class DeliveryController extends BaseCrudController<Delivery, Integer, De
         );
     }
 
-    // ========================
-    // CREATE
-    // ========================
     @Post
     @Transactional
     public HttpResponse<?> create(@Body DeliveryCreateRequest req) {
 
-        if (req.getOrderId() == null)
+        if (req.getOrderId() == null) {
             return HttpResponse.badRequest(ApiResponse.error(-400, "order_id is required"));
-
-        if (CommonUtil.isNullOrEmpty(req.getItems()))
-            return HttpResponse.badRequest(ApiResponse.error(-400, "items is required"));
-
-        Set<Integer> checkDup = new HashSet<>();
-
-        for (ItemRequest i : req.getItems()) {
-
-            if (i.getProductId() == null)
-                return HttpResponse.badRequest(ApiResponse.error(-400, "product_id is required"));
-
-            if (!checkDup.add(i.getProductId()))
-                return HttpResponse.badRequest(ApiResponse.error(-400, "duplicate product_id"));
-
-            if (i.getQuantity() == null || i.getQuantity().compareTo(BigDecimal.ZERO) <= 0)
-                return HttpResponse.badRequest(ApiResponse.error(-400, "quantity must > 0"));
         }
 
-        Delivery d = new Delivery();
+        Order order = orderDao.findById(req.getOrderId())
+                .orElseThrow(() -> new RuntimeException("order not found"));
 
-        d.setOrderId(req.getOrderId());
+        List<OrderItem> orderItems = orderItemDao.findByOrderId(order.getId());
+
+        Delivery d = new Delivery();
+        d.setOrderId(order.getId());
         d.setDeliveryNo(generateDeliveryNo());
         d.setDeliveryDate(ApiUtil.toDate(req.getDeliveryDate()));
-
         d.setWarehouseId(req.getWarehouseId());
         d.setCompanyId(req.getCompanyId());
         d.setDeliveryAddress(ApiUtil.trim(req.getDeliveryAddress()));
-
-        d.setStatus(req.getStatus() != null ? req.getStatus() : "NEW");
-        d.setNote(ApiUtil.trim(req.getNote()));
-
+        d.setStatus("NEW");
         d.setCreatedAt(LocalDateTime.now());
         d.setUpdatedAt(LocalDateTime.now());
 
         d = dao.insert(d);
 
+        // 🔥 AUTO items từ Order
         List<DeliveryItem> list = new ArrayList<>();
 
-        for (ItemRequest i : req.getItems()) {
-
+        for (OrderItem oi : orderItems) {
             DeliveryItem item = new DeliveryItem();
-
             item.setDeliveryId(d.getId());
-            item.setProductId(i.getProductId());
-            item.setQuantity(i.getQuantity());
-            item.setNote(i.getNote());
-
+            item.setProductId(oi.getProductId());
+            item.setQuantity(oi.getQuantity());
             list.add(item);
         }
 
@@ -235,36 +227,26 @@ public class DeliveryController extends BaseCrudController<Delivery, Integer, De
             @Body UpdateStatusRequest req
     ) {
 
-        var opt = dao.findById(id);
-        if (opt.isEmpty()) {
-            return HttpResponse.notFound(ApiResponse.error(-404, "not found"));
-        }
+        Delivery old = dao.findById(id)
+                .orElseThrow(() -> new RuntimeException("not found"));
 
-        if (req.getStatus() == null || req.getStatus().isBlank()) {
-            return HttpResponse.badRequest(ApiResponse.error(-400, "status is required"));
-        }
-
-        Delivery old = opt.get();
-        String oldStatus = old.getStatus();
-        String newStatus = req.getStatus();
-
-        if ("DONE".equals(oldStatus)) {
+        if ("DONE".equals(old.getStatus())) {
             return HttpResponse.badRequest(ApiResponse.error(-400, "delivery already DONE"));
         }
 
-        if ("DELIVERING".equals(newStatus)) {
+        if ("DELIVERING".equals(req.getStatus())) {
             deliveryService.startDelivery(id);
             return HttpResponse.ok(ApiResponse.success(true));
-        }else if ("DONE".equals(newStatus)) {
+        }
+
+        if ("DONE".equals(req.getStatus())) {
             deliveryService.finishDelivery(id);
             return HttpResponse.ok(ApiResponse.success(true));
         }
 
-        Delivery x = new Delivery();
-        x.setStatus(newStatus);
-        x.setUpdatedAt(LocalDateTime.now());
-
-        dao.updateSelective(id, x);
+        Delivery delivery = new Delivery();
+        delivery.setStatus(req.getStatus());
+        dao.updateSelective(id, delivery);
 
         return HttpResponse.ok(ApiResponse.success(true));
     }

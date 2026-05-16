@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.List;
 
 public class ApiUtil {
 
@@ -97,6 +98,18 @@ public class ApiUtil {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    public static List<Integer> parseIntegerList(String value) {
+        if (value == null || value.isBlank()) return List.of();
+
+        return java.util.Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .map(ApiUtil::parseInteger)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
     }
 
     public static String toCamelCase(String name) {

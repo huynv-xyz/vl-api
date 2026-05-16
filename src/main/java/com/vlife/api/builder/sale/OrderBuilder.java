@@ -38,6 +38,10 @@ public class OrderBuilder extends ItemBuilder<Order> {
     private final ProductDao productDao;
     private final ProductBuilder productBuilder;
 
+    private final ReturnDao returnDao;
+    private final ReturnItemDao returnItemDao;
+
+
     @Inject
     DeliveryItemBuilder deliveryItemBuilder;
 
@@ -55,7 +59,9 @@ public class OrderBuilder extends ItemBuilder<Order> {
             ExportDao exportDao,
             ExportItemDao exportItemDao,
             ArLedgerDao arLedgerDao,
-            ReceiptDao receiptDao
+            ReceiptDao receiptDao,
+            ReturnDao returnDao,
+            ReturnItemDao returnItemDao
     ) {
         this.customerDao = customerDao;
         this.employeeDao = employeeDao;
@@ -69,25 +75,31 @@ public class OrderBuilder extends ItemBuilder<Order> {
         this.exportItemDao = exportItemDao;
         this.arLedgerDao = arLedgerDao;
         this.receiptDao = receiptDao;
+        this.returnDao = returnDao;
+        this.returnItemDao = returnItemDao;
     }
 
     @Override
     public Map<String, Object> buildItemFull(Order item) {
+
         if (item == null) return Map.of();
 
         Map<String, Object> x = new LinkedHashMap<>(autoBuild(item));
 
-        Customer customer = item.getCustomerId() != null
-                ? customerDao.findById(item.getCustomerId()).orElse(null)
-                : null;
+        // ===== BASIC
+        x.put("customer",
+                Optional.ofNullable(item.getCustomerId())
+                        .flatMap(customerDao::findById)
+                        .orElse(null)
+        );
 
-        Employee employee = item.getEmployeeId() != null
-                ? employeeDao.findById(item.getEmployeeId()).orElse(null)
-                : null;
+        x.put("employee",
+                Optional.ofNullable(item.getEmployeeId())
+                        .flatMap(employeeDao::findById)
+                        .orElse(null)
+        );
 
-        x.put("customer", customer);
-        x.put("employee", employee);
-
+        // ===== LOAD
         List<OrderItem> items = orderItemDao.findByOrderId(item.getId());
         List<Delivery> deliveries = deliveryDao.findByOrderId(item.getId());
         List<Export> exports = exportDao.findByOrderId(item.getId());
@@ -102,46 +114,48 @@ public class OrderBuilder extends ItemBuilder<Order> {
                         ? Collections.emptyMap()
                         : productDao.findByIdsAsMap(productIds);
 
-        Set<Integer> warehouseIds = new HashSet<>();
-
-        for (Delivery d : deliveries) {
-            if (d.getWarehouseId() != null) {
-                warehouseIds.add(d.getWarehouseId());
-            }
-        }
-
-        for (Export e : exports) {
-            if (e.getWarehouseId() != null) {
-                warehouseIds.add(e.getWarehouseId());
-            }
-        }
-
         Map<Integer, BigDecimal> exportedMap =
                 exportItemDao.sumExportedByOrderId(item.getId());
 
-        Map<Integer, Warehouse> warehouseMap =
-                warehouseIds.isEmpty()
-                        ? Collections.emptyMap()
-                        : warehouseDao.findByIdsAsMap(warehouseIds);
+        Map<Integer, BigDecimal> returnedMap =
+                returnItemDao.sumReturnedByOrderId(item.getId());
 
+        // ===== ITEMS
         List<Map<String, Object>> itemRes = new ArrayList<>();
-
         BigDecimal total = BigDecimal.ZERO;
 
         for (OrderItem oi : items) {
 
+            Integer productId = oi.getProductId();
+
             Map<String, Object> m = new LinkedHashMap<>(autoBuildAny(oi));
 
-            Product p = productMap.get(oi.getProductId());
+            Product p = productMap.get(productId);
             if (p != null) {
                 m.put("product", productBuilder.buildItem(p));
             }
 
             BigDecimal exportedQty =
-                    exportedMap.getOrDefault(oi.getProductId(), BigDecimal.ZERO);
+                    exportedMap.getOrDefault(productId, BigDecimal.ZERO);
 
+            BigDecimal returnedQty =
+                    returnedMap.getOrDefault(productId, BigDecimal.ZERO);
+
+            // ✅ remain chuẩn
             BigDecimal remain =
                     oi.getQuantity().subtract(exportedQty);
+
+            if (remain.compareTo(BigDecimal.ZERO) < 0) {
+                remain = BigDecimal.ZERO;
+            }
+
+            // optional
+            BigDecimal realExported =
+                    exportedQty.subtract(returnedQty);
+
+            if (realExported.compareTo(BigDecimal.ZERO) < 0) {
+                realExported = BigDecimal.ZERO;
+            }
 
             BigDecimal discount =
                     Optional.ofNullable(oi.getDiscount()).orElse(BigDecimal.ZERO);
@@ -152,6 +166,8 @@ public class OrderBuilder extends ItemBuilder<Order> {
                             .subtract(discount);
 
             m.put("exported_quantity", exportedQty);
+            m.put("returned_quantity", returnedQty);
+            m.put("real_exported_quantity", realExported);
             m.put("remain_quantity", remain);
             m.put("line_total", lineTotal);
 
@@ -163,10 +179,23 @@ public class OrderBuilder extends ItemBuilder<Order> {
         x.put("items", itemRes);
         x.put("total_amount", total);
 
-        // ========================
-        // DELIVERY
-        // ========================
+        // ===== WAREHOUSE MAP
+        Set<Integer> warehouseIds = new HashSet<>();
 
+        deliveries.forEach(d -> {
+            if (d.getWarehouseId() != null) warehouseIds.add(d.getWarehouseId());
+        });
+
+        exports.forEach(e -> {
+            if (e.getWarehouseId() != null) warehouseIds.add(e.getWarehouseId());
+        });
+
+        Map<Integer, Warehouse> warehouseMap =
+                warehouseIds.isEmpty()
+                        ? Collections.emptyMap()
+                        : warehouseDao.findByIdsAsMap(warehouseIds);
+
+        // ===== DELIVERY
         List<Map<String, Object>> deliveryRes = new ArrayList<>();
 
         for (Delivery d : deliveries) {
@@ -175,7 +204,6 @@ public class OrderBuilder extends ItemBuilder<Order> {
             dm.put("warehouse", warehouseMap.get(d.getWarehouseId()));
 
             List<DeliveryItem> dis = deliveryItemDao.findByDeliveryId(d.getId());
-
             dm.put("items", deliveryItemBuilder.buildList(dis));
 
             deliveryRes.add(dm);
@@ -183,6 +211,7 @@ public class OrderBuilder extends ItemBuilder<Order> {
 
         x.put("deliveries", deliveryRes);
 
+        // ===== EXPORT
         Set<Integer> exportIds = exports.stream()
                 .map(Export::getId)
                 .collect(Collectors.toSet());
@@ -201,13 +230,15 @@ public class OrderBuilder extends ItemBuilder<Order> {
             Map<String, Object> em = new LinkedHashMap<>(autoBuildAny(e));
             em.put("warehouse", warehouseMap.get(e.getWarehouseId()));
 
-            List<ExportItem> eis = exportItemMap.getOrDefault(e.getId(), List.of());
+            List<ExportItem> eis =
+                    exportItemMap.getOrDefault(e.getId(), List.of());
 
             List<Map<String, Object>> eisRes = new ArrayList<>();
 
             for (ExportItem ei : eis) {
 
-                Map<String, Object> im = new LinkedHashMap<>(autoBuildAny(ei));
+                Map<String, Object> im =
+                        new LinkedHashMap<>(autoBuildAny(ei));
 
                 Product p = productMap.get(ei.getProductId());
                 if (p != null) {
@@ -218,22 +249,62 @@ public class OrderBuilder extends ItemBuilder<Order> {
             }
 
             em.put("items", eisRes);
-
             exportRes.add(em);
         }
 
         x.put("exports", exportRes);
 
-        List<Receipt> receipts = receiptDao.findByOrderId(item.getId());
+        // ===== RECEIPT
+        x.put("receipts",
+                receiptDao.findByOrderId(item.getId())
+                        .stream()
+                        .map(r -> new LinkedHashMap<>(autoBuildAny(r)))
+                        .toList()
+        );
 
-        List<Map<String, Object>> receiptRes = new ArrayList<>();
+        // ===== RETURN
+        List<Return> returns = returnDao.findByOrderId(item.getId());
 
-        for (Receipt r : receipts) {
+        Set<Integer> returnIds = returns.stream()
+                .map(Return::getId)
+                .collect(Collectors.toSet());
+
+        Map<Integer, List<ReturnItem>> returnItemMap =
+                returnIds.isEmpty()
+                        ? Collections.emptyMap()
+                        : returnItemDao.findByReturnIds(returnIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(ReturnItem::getReturnId));
+
+        List<Map<String, Object>> returnRes = new ArrayList<>();
+
+        for (Return r : returns) {
+
             Map<String, Object> rm = new LinkedHashMap<>(autoBuildAny(r));
-            receiptRes.add(rm);
+
+            List<ReturnItem> ris =
+                    returnItemMap.getOrDefault(r.getId(), List.of());
+
+            List<Map<String, Object>> risRes = new ArrayList<>();
+
+            for (ReturnItem ri : ris) {
+
+                Map<String, Object> im =
+                        new LinkedHashMap<>(autoBuildAny(ri));
+
+                Product p = productMap.get(ri.getProductId());
+                if (p != null) {
+                    im.put("product", productBuilder.buildItem(p));
+                }
+
+                risRes.add(im);
+            }
+
+            rm.put("items", risRes);
+            returnRes.add(rm);
         }
 
-        x.put("receipts", receiptRes);
+        x.put("returns", returnRes);
 
         return x;
     }

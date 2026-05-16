@@ -13,6 +13,7 @@ import io.micronaut.http.MediaType;
 import io.micronaut.http.annotation.*;
 import io.micronaut.http.multipart.CompletedFileUpload;
 import io.micronaut.serde.annotation.Serdeable;
+import io.micronaut.serde.config.naming.SnakeCaseStrategy;
 import jakarta.inject.Inject;
 
 import java.io.IOException;
@@ -46,6 +47,10 @@ public class ProductController extends BaseCrudController<Product, Integer, Prod
         return dao.search(
                 trim(filters.get("keyword")),
                 parseInt(filters.get("status")),
+                trim(filters.get("nature")),
+                trim(filters.get("group_code")),
+                parseInt(filters.get("default_warehouse_id")),
+                trim(filters.get("inventory_account_code")),
                 pageable
         );
     }
@@ -57,6 +62,12 @@ public class ProductController extends BaseCrudController<Product, Integer, Prod
             x.setCode(trim(r.getCode()));
             x.setName(trim(r.getName()));
             x.setUnit(trim(r.getUnit()));
+            x.setNature(trim(r.getNature()));
+            x.setGroupCode(trim(r.getGroupCode()));
+            x.setGroupName(trim(r.getGroupName()));
+            x.setDescription(trim(r.getDescription()));
+            x.setDefaultWarehouseId(r.getDefaultWarehouseId());
+            x.setInventoryAccountCode(trim(r.getInventoryAccountCode()));
             x.setStatus(r.getStatus() != null ? r.getStatus() : 1);
             x.setCreatedAt(LocalDateTime.now());
             x.setUpdatedAt(LocalDateTime.now());
@@ -71,6 +82,12 @@ public class ProductController extends BaseCrudController<Product, Integer, Prod
             x.setCode(trim(r.getCode()));
             x.setName(trim(r.getName()));
             x.setUnit(trim(r.getUnit()));
+            x.setNature(trim(r.getNature()));
+            x.setGroupCode(trim(r.getGroupCode()));
+            x.setGroupName(trim(r.getGroupName()));
+            x.setDescription(trim(r.getDescription()));
+            x.setDefaultWarehouseId(r.getDefaultWarehouseId());
+            x.setInventoryAccountCode(trim(r.getInventoryAccountCode()));
             x.setStatus(r.getStatus());
             x.setUpdatedAt(LocalDateTime.now());
             mergeNullFromDb(id, x, "id", "createdAt");
@@ -139,11 +156,17 @@ public class ProductController extends BaseCrudController<Product, Integer, Prod
         return null;
     }
 
-    @Serdeable
+    @Serdeable(naming = SnakeCaseStrategy.class)
     public static class ProductCreateRequest {
         private String code;
         private String name;
         private String unit;
+        private String nature;
+        private String groupCode;
+        private String groupName;
+        private String description;
+        private Integer defaultWarehouseId;
+        private String inventoryAccountCode;
         private Integer status;
 
         public String getCode() {
@@ -168,6 +191,54 @@ public class ProductController extends BaseCrudController<Product, Integer, Prod
 
         public void setUnit(String unit) {
             this.unit = unit;
+        }
+
+        public String getNature() {
+            return nature;
+        }
+
+        public void setNature(String nature) {
+            this.nature = nature;
+        }
+
+        public String getGroupCode() {
+            return groupCode;
+        }
+
+        public void setGroupCode(String groupCode) {
+            this.groupCode = groupCode;
+        }
+
+        public String getGroupName() {
+            return groupName;
+        }
+
+        public void setGroupName(String groupName) {
+            this.groupName = groupName;
+        }
+
+        public String getDescription() {
+            return description;
+        }
+
+        public void setDescription(String description) {
+            this.description = description;
+        }
+
+        public Integer getDefaultWarehouseId() {
+            return defaultWarehouseId;
+        }
+
+        public void setDefaultWarehouseId(Integer defaultWarehouseId) {
+            this.defaultWarehouseId = defaultWarehouseId;
+        }
+
+        public String getInventoryAccountCode() {
+            return inventoryAccountCode;
+        }
+
+        public void setInventoryAccountCode(String inventoryAccountCode) {
+            this.inventoryAccountCode = inventoryAccountCode;
         }
 
         public Integer getStatus() {

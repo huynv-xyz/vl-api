@@ -42,7 +42,7 @@ public class CurrencyController extends BaseCrudController<Currency, Integer, Cu
             x.setCode(trim(r.getCode()));
             x.setName(trim(r.getName()));
             x.setSymbol(trim(r.getSymbol()));
-            x.setExchangeRate(r.getExchangeRate());
+            x.setExchangeRate(normalizeExchangeRate(r.getExchangeRate()));
             x.setCreatedAt(LocalDateTime.now());
             x.setUpdatedAt(LocalDateTime.now());
             return x;
@@ -56,7 +56,7 @@ public class CurrencyController extends BaseCrudController<Currency, Integer, Cu
             x.setCode(trim(r.getCode()));
             x.setName(trim(r.getName()));
             x.setSymbol(trim(r.getSymbol()));
-            x.setExchangeRate(r.getExchangeRate());
+            x.setExchangeRate(normalizeExchangeRate(r.getExchangeRate()));
             x.setUpdatedAt(LocalDateTime.now());
 
             mergeNullFromDb(id, x, "id", "createdAt", "createdBy");
@@ -68,6 +68,9 @@ public class CurrencyController extends BaseCrudController<Currency, Integer, Cu
     protected <REQ> ApiResponse<?> validateBeforeCreate(Currency entity, REQ req) {
         if (isBlank(entity.getCode())) return ApiResponse.error(-400, "code is required");
         if (isBlank(entity.getName())) return ApiResponse.error(-400, "name is required");
+        if (entity.getExchangeRate() == null || entity.getExchangeRate() <= 0) {
+            return ApiResponse.error(-400, "exchange_rate must be greater than 0");
+        }
         if (dao.findByCode(entity.getCode()).isPresent()) return ApiResponse.error(-400, "code already exists");
         return null;
     }
@@ -76,6 +79,9 @@ public class CurrencyController extends BaseCrudController<Currency, Integer, Cu
     protected <REQ> ApiResponse<?> validateBeforeUpdate(Integer id, Currency entity, REQ req) {
         if (isBlank(entity.getCode())) return ApiResponse.error(-400, "code is required");
         if (isBlank(entity.getName())) return ApiResponse.error(-400, "name is required");
+        if (entity.getExchangeRate() == null || entity.getExchangeRate() <= 0) {
+            return ApiResponse.error(-400, "exchange_rate must be greater than 0");
+        }
 
         var oldOpt = dao.findById(id);
         if (oldOpt.isEmpty()) return ApiResponse.error(-404, "not found");
@@ -86,6 +92,10 @@ public class CurrencyController extends BaseCrudController<Currency, Integer, Cu
         }
 
         return null;
+    }
+
+    private Double normalizeExchangeRate(Double value) {
+        return value == null ? 1.0 : value;
     }
 
     @Serdeable

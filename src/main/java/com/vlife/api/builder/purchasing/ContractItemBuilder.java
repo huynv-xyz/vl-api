@@ -5,6 +5,7 @@ import com.vlife.api.util.ApiUtil;
 import com.vlife.shared.api.builder.ItemBuilder;
 import com.vlife.shared.jdbc.dao.ProductDao;
 import com.vlife.shared.jdbc.dao.purchasing.ContractDao;
+import com.vlife.shared.jdbc.dao.purchasing.CurrencyDao;
 import com.vlife.shared.jdbc.dao.purchasing.ShipmentItemDao;
 import com.vlife.shared.jdbc.entity.Product;
 import com.vlife.shared.jdbc.entity.purchasing.Contract;
@@ -24,15 +25,18 @@ public class ContractItemBuilder extends ItemBuilder<ContractItem> {
     private final ProductBuilder productBuilder;
     private final ShipmentItemDao shipmentItemDao;
     private final ContractDao contractDao;
+    private final CurrencyDao currencyDao;
 
     public ContractItemBuilder(ProductDao productDao,
                                ProductBuilder productBuilder,
                                ShipmentItemDao shipmentItemDao,
-                               ContractDao contractDao) {
+                               ContractDao contractDao,
+                               CurrencyDao currencyDao) {
         this.productDao = productDao;
         this.productBuilder = productBuilder;
         this.shipmentItemDao = shipmentItemDao;
         this.contractDao = contractDao;
+        this.currencyDao = currencyDao;
     }
 
     public Map<String, Object> buildItemFull(ContractItem item) {
@@ -53,12 +57,14 @@ public class ContractItemBuilder extends ItemBuilder<ContractItem> {
 
         BigDecimal vatRate = contract != null ? ApiUtil.nvl(contract.getVatRate()) : BigDecimal.ZERO;
         BigDecimal importTaxRate = contract != null ? ApiUtil.nvl(contract.getImportTaxRate()) : BigDecimal.ZERO;
+        BigDecimal exchangeRate = resolveExchangeRate(contract);
+        BigDecimal handlingFee = contract != null ? ApiUtil.nvl(contract.getHandlingFee()) : BigDecimal.ZERO;
 
         Map<Integer, BigDecimal> shippedMap = item.getContractId() != null
                 ? shipmentItemDao.sumQuantityByContractId(item.getContractId())
                 : Collections.emptyMap();
 
-        enrichCalculatedFields(x, item, vatRate, importTaxRate);
+        enrichCalculatedFields(x, item, vatRate, importTaxRate, exchangeRate, handlingFee);
 
         return x;
     }
@@ -84,6 +90,8 @@ public class ContractItemBuilder extends ItemBuilder<ContractItem> {
 
         BigDecimal vatRate = contract != null ? ApiUtil.nvl(contract.getVatRate()) : BigDecimal.ZERO;
         BigDecimal importTaxRate = contract != null ? ApiUtil.nvl(contract.getImportTaxRate()) : BigDecimal.ZERO;
+        BigDecimal exchangeRate = resolveExchangeRate(contract);
+        BigDecimal handlingFee = contract != null ? ApiUtil.nvl(contract.getHandlingFee()) : BigDecimal.ZERO;
 
         Map<Integer, BigDecimal> shippedMap = contractId != null
                 ? shipmentItemDao.sumQuantityByContractId(contractId)
@@ -92,7 +100,7 @@ public class ContractItemBuilder extends ItemBuilder<ContractItem> {
         List<Map<String, Object>> list = new ArrayList<>(items.size());
 
         for (ContractItem item : items) {
-            list.add(buildItemWithContext(item, productMap, vatRate, importTaxRate, shippedMap));
+            list.add(buildItemWithContext(item, productMap, vatRate, importTaxRate, exchangeRate, handlingFee, shippedMap));
         }
 
         return list;
@@ -103,6 +111,8 @@ public class ContractItemBuilder extends ItemBuilder<ContractItem> {
             Map<Integer, Product> productMap,
             BigDecimal vatRate,
             BigDecimal importTaxRate,
+            BigDecimal exchangeRate,
+            BigDecimal handlingFee,
             Map<Integer, BigDecimal> shippedMap
     ) {
         if (item == null) return Map.of();
@@ -112,7 +122,7 @@ public class ContractItemBuilder extends ItemBuilder<ContractItem> {
         Product p = productMap.get(item.getProductId());
         x.put("product", p != null ? productBuilder.buildItem(p) : null);
 
-        enrichCalculatedFields(x, item, vatRate, importTaxRate);
+        enrichCalculatedFields(x, item, vatRate, importTaxRate, exchangeRate, handlingFee);
 
         return x;
     }
@@ -121,7 +131,9 @@ public class ContractItemBuilder extends ItemBuilder<ContractItem> {
             Map<String, Object> x,
             ContractItem item,
             BigDecimal vatRate,
-            BigDecimal importTaxRate
+            BigDecimal importTaxRate,
+            BigDecimal exchangeRate,
+            BigDecimal handlingFee
     ) {
         BigDecimal qty = ApiUtil.nvl(item.getQuantity());
 
@@ -133,35 +145,58 @@ public class ContractItemBuilder extends ItemBuilder<ContractItem> {
 
         BigDecimal basePrice = unitPrice.subtract(discountAmount);
 
-        BigDecimal priceBeforeTax = basePrice
+        BigDecimal foreignPrice = basePrice
                 .add(packaging)
                 .add(freight);
 
+        BigDecimal priceBeforeTax = foreignPrice;
+
+        BigDecimal priceBeforeTaxVnd = foreignPrice
+                .multiply(resolvePositive(exchangeRate))
+                .add(ApiUtil.nvl(handlingFee));
+
         BigDecimal importTax = percentOf(priceBeforeTax, importTaxRate);
+        BigDecimal importTaxVnd = percentOf(priceBeforeTaxVnd, importTaxRate);
 
         BigDecimal vatBase = priceBeforeTax.add(importTax);
         BigDecimal vat = percentOf(vatBase, vatRate);
+        BigDecimal vatBaseVnd = priceBeforeTaxVnd.add(importTaxVnd);
+        BigDecimal vatVnd = percentOf(vatBaseVnd, vatRate);
 
         BigDecimal finalPrice = priceBeforeTax
                 .add(importTax)
                 .add(vat);
+        BigDecimal finalPriceVnd = priceBeforeTaxVnd
+                .add(importTaxVnd)
+                .add(vatVnd);
 
-        BigDecimal totalAmount = qty.multiply(finalPrice);
+        BigDecimal totalAmount = qty.multiply(priceBeforeTax);
+        BigDecimal totalAmountVnd = qty.multiply(priceBeforeTaxVnd);
 
         x.put("base_price", basePrice);
         x.put("packaging_price", packaging);
         x.put("freight_price", freight);
 
+        x.put("foreign_price", foreignPrice);
+        x.put("exchange_rate", resolvePositive(exchangeRate));
+        x.put("handling_fee", ApiUtil.nvl(handlingFee));
+        x.put("input_price", priceBeforeTax);
         x.put("price_before_tax", priceBeforeTax);
+        x.put("input_price_vnd", priceBeforeTaxVnd);
+        x.put("price_before_tax_vnd", priceBeforeTaxVnd);
 
         x.put("import_tax_rate", importTaxRate);
         x.put("vat_rate", vatRate);
 
         x.put("import_tax_amount", importTax);
         x.put("vat_amount", vat);
+        x.put("import_tax_amount_vnd", importTaxVnd);
+        x.put("vat_amount_vnd", vatVnd);
 
         x.put("final_price", finalPrice);
+        x.put("final_price_vnd", finalPriceVnd);
         x.put("total_amount", totalAmount);
+        x.put("total_amount_vnd", totalAmountVnd);
     }
 
     private BigDecimal percentOf(BigDecimal amount, BigDecimal rate) {
@@ -171,5 +206,33 @@ public class ContractItemBuilder extends ItemBuilder<ContractItem> {
         return amount
                 .multiply(rate)
                 .divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal resolveExchangeRate(Contract contract) {
+        if (contract == null) {
+            return BigDecimal.ONE;
+        }
+
+        if (contract.getExchangeRate() != null && contract.getExchangeRate().compareTo(BigDecimal.ZERO) > 0) {
+            return contract.getExchangeRate();
+        }
+
+        if (contract.getCurrencyId() == null) {
+            return BigDecimal.ONE;
+        }
+
+        return currencyDao.findById(contract.getCurrencyId())
+                .map(currency -> currency.getExchangeRate() != null
+                        ? BigDecimal.valueOf(currency.getExchangeRate())
+                        : BigDecimal.ONE)
+                .map(this::resolvePositive)
+                .orElse(BigDecimal.ONE);
+    }
+
+    private BigDecimal resolvePositive(BigDecimal value) {
+        if (value == null || value.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ONE;
+        }
+        return value;
     }
 }

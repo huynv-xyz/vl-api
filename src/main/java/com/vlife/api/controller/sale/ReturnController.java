@@ -9,6 +9,7 @@ import com.vlife.shared.jdbc.dao.sale.ReturnDao;
 import com.vlife.shared.jdbc.dao.sale.ReturnItemDao;
 import com.vlife.shared.jdbc.entity.sale.Return;
 import com.vlife.shared.jdbc.entity.sale.ReturnItem;
+import com.vlife.shared.service.sale.ReturnService;
 import com.vlife.shared.util.CommonUtil;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
@@ -29,17 +30,23 @@ import java.util.stream.Collectors;
 public class ReturnController extends BaseCrudController<Return, Integer, ReturnDao> {
 
     private final ReturnItemDao returnItemDao;
+    private final ReturnService returnService;
 
     @Inject
     public ReturnController(
             ReturnDao dao,
             ReturnBuilder builder,
-            ReturnItemDao returnItemDao
+            ReturnItemDao returnItemDao,
+            ReturnService returnService
     ) {
         super(dao, builder);
         this.returnItemDao = returnItemDao;
+        this.returnService = returnService;
     }
 
+    // ========================
+    // SEARCH
+    // ========================
     @Override
     protected Page<Return> doSearch(Map<String, String> filters, Pageable pageable) {
         return dao.search(
@@ -50,7 +57,9 @@ public class ReturnController extends BaseCrudController<Return, Integer, Return
         );
     }
 
-
+    // ========================
+    // CREATE
+    // ========================
     @Post
     @Transactional
     public HttpResponse<?> create(@Body ReturnCreateRequest req) {
@@ -81,7 +90,7 @@ public class ReturnController extends BaseCrudController<Return, Integer, Return
         r.setExportId(req.getExportId());
         r.setReturnNo(generateReturnNo());
 
-        r.setStatus(req.getStatus() != null ? req.getStatus() : "NEW");
+        r.setStatus("NEW");
         r.setReason(ApiUtil.trim(req.getReason()));
 
         r.setCreatedAt(LocalDateTime.now());
@@ -107,6 +116,9 @@ public class ReturnController extends BaseCrudController<Return, Integer, Return
         return HttpResponse.ok(ApiResponse.success(r));
     }
 
+    // ========================
+    // UPDATE
+    // ========================
     @Put("/{id}")
     @Transactional
     public HttpResponse<?> update(@PathVariable Integer id, @Body ReturnUpdateRequest req) {
@@ -116,14 +128,17 @@ public class ReturnController extends BaseCrudController<Return, Integer, Return
             return HttpResponse.notFound(ApiResponse.error(-404, "not found"));
         }
 
+        Return old = oldOpt.get();
+
+        if ("DONE".equals(old.getStatus())) {
+            return HttpResponse.badRequest(ApiResponse.error(-400, "Return already DONE"));
+        }
+
         if (CommonUtil.isNullOrEmpty(req.getItems()))
             return HttpResponse.badRequest(ApiResponse.error(-400, "items is required"));
 
         // ===== UPDATE RETURN
         Return x = new Return();
-
-        if (req.getStatus() != null)
-            x.setStatus(req.getStatus());
 
         if (req.getReason() != null)
             x.setReason(ApiUtil.trim(req.getReason()));
@@ -145,14 +160,14 @@ public class ReturnController extends BaseCrudController<Return, Integer, Return
 
             newProductIds.add(i.getProductId());
 
-            ReturnItem old = oldMap.get(i.getProductId());
+            ReturnItem oldItem = oldMap.get(i.getProductId());
 
-            if (old != null) {
+            if (oldItem != null) {
 
                 ReturnItem update = new ReturnItem();
                 update.setQuantity(i.getQuantity());
 
-                returnItemDao.updateSelective(old.getId(), update);
+                returnItemDao.updateSelective(oldItem.getId(), update);
 
             } else {
 
@@ -165,15 +180,43 @@ public class ReturnController extends BaseCrudController<Return, Integer, Return
             }
         }
 
-        for (ReturnItem old : oldItems) {
-            if (!newProductIds.contains(old.getProductId())) {
-                returnItemDao.deleteById(old.getId());
+        for (ReturnItem oi : oldItems) {
+            if (!newProductIds.contains(oi.getProductId())) {
+                returnItemDao.deleteById(oi.getId());
             }
         }
 
         if (!toInsert.isEmpty()) {
             returnItemDao.saveAll(toInsert);
         }
+
+        return HttpResponse.ok(ApiResponse.success(true));
+    }
+
+    @Put("/{id}/status")
+    @Transactional
+    public HttpResponse<?> updateStatus(
+            @PathVariable Integer id,
+            @Body UpdateStatusRequest req
+    ) {
+
+        var opt = dao.findById(id);
+        if (opt.isEmpty()) {
+            return HttpResponse.notFound(ApiResponse.error(-404, "not found"));
+        }
+
+        String newStatus = req.getStatus();
+
+        if ("DONE".equals(newStatus)) {
+            returnService.finishReturn(id);
+            return HttpResponse.ok(ApiResponse.success(true));
+        }
+
+        Return x = new Return();
+        x.setStatus(newStatus);
+        x.setUpdatedAt(LocalDateTime.now());
+
+        dao.updateSelective(id, x);
 
         return HttpResponse.ok(ApiResponse.success(true));
     }
@@ -189,7 +232,9 @@ public class ReturnController extends BaseCrudController<Return, Integer, Return
         return prefix + "-" + String.format("%03d", next);
     }
 
-
+    // ========================
+    // DTO
+    // ========================
     @Setter
     @Getter
     @Serdeable
@@ -201,7 +246,6 @@ public class ReturnController extends BaseCrudController<Return, Integer, Return
         @JsonProperty("export_id")
         private Integer exportId;
 
-        private String status;
         private String reason;
 
         private List<ItemRequest> items;
@@ -221,5 +265,12 @@ public class ReturnController extends BaseCrudController<Return, Integer, Return
         private Integer productId;
 
         private BigDecimal quantity;
+    }
+
+    @Setter
+    @Getter
+    @Serdeable
+    public static class UpdateStatusRequest {
+        private String status;
     }
 }

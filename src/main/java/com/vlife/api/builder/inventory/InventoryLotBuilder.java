@@ -10,6 +10,8 @@ import com.vlife.shared.jdbc.entity.inventory.InventoryLot;
 import com.vlife.shared.util.CommonUtil;
 import jakarta.inject.Singleton;
 
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -42,6 +44,7 @@ public class InventoryLotBuilder extends ItemBuilder<InventoryLot> {
 
         x.put("product", product != null ? productBuilder.buildItem(product) : null);
         x.put("warehouse", warehouse);
+        putExpiryInfo(x, item);
 
         return x;
     }
@@ -74,10 +77,36 @@ public class InventoryLotBuilder extends ItemBuilder<InventoryLot> {
 
             x.put("product", product != null ? productBuilder.buildItem(product) : null);
             x.put("warehouse", warehouseMap.get(item.getWarehouseId()));
+            putExpiryInfo(x, item);
 
             list.add(x);
         }
 
         return list;
+    }
+
+    private void putExpiryInfo(Map<String, Object> x, InventoryLot item) {
+        LocalDate expiryDate = item.getExpiryDate();
+
+        if (expiryDate == null) {
+            x.put("expiry_status", "NO_EXPIRY");
+            x.put("days_to_expiry", null);
+            x.put("expiry_message", "Chưa có HSD");
+            return;
+        }
+
+        long days = ChronoUnit.DAYS.between(LocalDate.now(), expiryDate);
+        x.put("days_to_expiry", days);
+
+        if (days < 0) {
+            x.put("expiry_status", "EXPIRED");
+            x.put("expiry_message", "Hết hạn");
+        } else if (days <= 180) {
+            x.put("expiry_status", "NEAR_EXPIRY");
+            x.put("expiry_message", "Cận date");
+        } else {
+            x.put("expiry_status", "VALID");
+            x.put("expiry_message", "Còn hạn");
+        }
     }
 }

@@ -5,8 +5,10 @@ import com.vlife.shared.api.builder.ItemBuilder;
 import com.vlife.shared.jdbc.dao.ProductDao;
 import com.vlife.shared.jdbc.dao.WarehouseDao;
 import com.vlife.shared.jdbc.dao.production.*;
+import com.vlife.shared.jdbc.dao.sale.InventoryLotDao;
 import com.vlife.shared.jdbc.entity.Product;
 import com.vlife.shared.jdbc.entity.Warehouse;
+import com.vlife.shared.jdbc.entity.inventory.InventoryLot;
 import com.vlife.shared.jdbc.entity.production.*;
 import com.vlife.shared.util.CommonUtil;
 import jakarta.inject.Singleton;
@@ -23,11 +25,16 @@ public class ProductionOrderBuilder extends ItemBuilder<ProductionOrder> {
     private final ProductionExtraItemDao extraDao;
     private final ProductionSubstitutionDao substitutionDao;
     private final ProductionOutputDao outputDao;
+    private final ProductionFifoAllocationRunDao fifoRunDao;
+    private final ProductionFifoAllocationDao fifoAllocationDao;
+    private final ProductionWarningDao warningDao;
+    private final ProductionActionLogDao actionLogDao;
 
     private final ProductDao productDao;
     private final ProductBuilder productBuilder;
 
     private final WarehouseDao warehouseDao;
+    private final InventoryLotDao inventoryLotDao;
 
     public ProductionOrderBuilder(
             ProductionOrderItemDao itemDao,
@@ -35,18 +42,28 @@ public class ProductionOrderBuilder extends ItemBuilder<ProductionOrder> {
             ProductionExtraItemDao extraDao,
             ProductionSubstitutionDao substitutionDao,
             ProductionOutputDao outputDao,
+            ProductionFifoAllocationRunDao fifoRunDao,
+            ProductionFifoAllocationDao fifoAllocationDao,
+            ProductionWarningDao warningDao,
+            ProductionActionLogDao actionLogDao,
             ProductDao productDao,
             ProductBuilder productBuilder,
-            WarehouseDao warehouseDao
+            WarehouseDao warehouseDao,
+            InventoryLotDao inventoryLotDao
     ) {
         this.itemDao = itemDao;
         this.materialDao = materialDao;
         this.extraDao = extraDao;
         this.substitutionDao = substitutionDao;
         this.outputDao = outputDao;
+        this.fifoRunDao = fifoRunDao;
+        this.fifoAllocationDao = fifoAllocationDao;
+        this.warningDao = warningDao;
+        this.actionLogDao = actionLogDao;
         this.productDao = productDao;
         this.productBuilder = productBuilder;
         this.warehouseDao = warehouseDao;
+        this.inventoryLotDao = inventoryLotDao;
     }
 
     @Override
@@ -123,6 +140,40 @@ public class ProductionOrderBuilder extends ItemBuilder<ProductionOrder> {
                                 ProductionOutput::getProductionItemId
                         ));
 
+        Map<Integer, List<ProductionFifoAllocation>> fifoAllocationMap =
+                fifoAllocationDao.findByProductionMaterialIds(
+                                materialMap.values().stream()
+                                        .flatMap(List::stream)
+                                        .map(ProductionMaterial::getId)
+                                        .filter(Objects::nonNull)
+                                        .collect(Collectors.toSet())
+                        )
+                        .stream()
+                        .collect(Collectors.groupingBy(
+                                ProductionFifoAllocation::getProductionMaterialId
+                        ));
+
+        Set<Integer> inventoryLotIds = fifoAllocationMap.values().stream()
+                .flatMap(List::stream)
+                .map(ProductionFifoAllocation::getInventoryLotId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        Map<Integer, List<ProductionWarning>> warningMap =
+                orderIds.stream()
+                        .flatMap(id -> warningDao.findByProductionId(id).stream())
+                        .collect(Collectors.groupingBy(ProductionWarning::getProductionId));
+
+        Map<Integer, List<ProductionActionLog>> actionLogMap =
+                orderIds.stream()
+                        .flatMap(id -> actionLogDao.findByProductionId(id).stream())
+                        .collect(Collectors.groupingBy(ProductionActionLog::getProductionId));
+
+        Map<Integer, List<ProductionFifoAllocationRun>> fifoRunMap =
+                orderIds.stream()
+                        .flatMap(id -> fifoRunDao.findByProductionId(id).stream())
+                        .collect(Collectors.groupingBy(ProductionFifoAllocationRun::getProductionId));
+
         // =====================================================
         // LOAD PRODUCT IDS
         // =====================================================
@@ -191,6 +242,18 @@ public class ProductionOrderBuilder extends ItemBuilder<ProductionOrder> {
             }
         });
 
+        fifoAllocationMap.values().forEach(list -> {
+            for (ProductionFifoAllocation i : list) {
+                if (i.getMaterialProductId() != null) {
+                    productIds.add(i.getMaterialProductId());
+                }
+
+                if (i.getMaterialWarehouseId() != null) {
+                    warehouseIds.add(i.getMaterialWarehouseId());
+                }
+            }
+        });
+
         // =====================================================
         // LOAD MASTER DATA
         // =====================================================
@@ -204,6 +267,11 @@ public class ProductionOrderBuilder extends ItemBuilder<ProductionOrder> {
                 warehouseIds.isEmpty()
                         ? Map.of()
                         : warehouseDao.findByIdsAsMap(warehouseIds);
+
+        Map<Integer, InventoryLot> inventoryLotMap =
+                inventoryLotIds.isEmpty()
+                        ? Map.of()
+                        : inventoryLotDao.findByIdsAsMap(inventoryLotIds);
 
         // =====================================================
         // BUILD RESPONSE
@@ -245,8 +313,10 @@ public class ProductionOrderBuilder extends ItemBuilder<ProductionOrder> {
                         "materials",
                         buildMaterials(
                                 materialMap.getOrDefault(item.getId(), List.of()),
+                                fifoAllocationMap,
                                 productMap,
-                                warehouseMap
+                                warehouseMap,
+                                inventoryLotMap
                         )
                 );
 
@@ -279,6 +349,9 @@ public class ProductionOrderBuilder extends ItemBuilder<ProductionOrder> {
             }
 
             x.put("items", itemResults);
+            x.put("fifo_runs", buildSimpleList(fifoRunMap.getOrDefault(order.getId(), List.of())));
+            x.put("warnings", buildSimpleList(warningMap.getOrDefault(order.getId(), List.of())));
+            x.put("action_logs", buildSimpleList(actionLogMap.getOrDefault(order.getId(), List.of())));
 
             result.add(x);
         }
@@ -292,8 +365,10 @@ public class ProductionOrderBuilder extends ItemBuilder<ProductionOrder> {
 
     private List<Map<String, Object>> buildMaterials(
             List<ProductionMaterial> items,
+            Map<Integer, List<ProductionFifoAllocation>> fifoAllocationMap,
             Map<Integer, Product> productMap,
-            Map<Integer, Warehouse> warehouseMap
+            Map<Integer, Warehouse> warehouseMap,
+            Map<Integer, InventoryLot> inventoryLotMap
     ) {
 
         List<Map<String, Object>> result = new ArrayList<>();
@@ -324,6 +399,15 @@ public class ProductionOrderBuilder extends ItemBuilder<ProductionOrder> {
             );
 
             x.put("warehouse", warehouseMap.get(i.getWarehouseId()));
+            x.put(
+                    "fifo_allocations",
+                    buildFifoAllocations(
+                            fifoAllocationMap.getOrDefault(i.getId(), List.of()),
+                            productMap,
+                            warehouseMap,
+                            inventoryLotMap
+                    )
+            );
 
             result.add(x);
         }
@@ -438,6 +522,57 @@ public class ProductionOrderBuilder extends ItemBuilder<ProductionOrder> {
             );
 
             result.add(x);
+        }
+
+        return result;
+    }
+
+    private List<Map<String, Object>> buildFifoAllocations(
+            List<ProductionFifoAllocation> items,
+            Map<Integer, Product> productMap,
+            Map<Integer, Warehouse> warehouseMap,
+            Map<Integer, InventoryLot> inventoryLotMap
+    ) {
+
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (ProductionFifoAllocation i : items) {
+            Map<String, Object> x =
+                    new LinkedHashMap<>(autoBuildAny(i));
+
+            Product material =
+                    productMap.get(i.getMaterialProductId());
+
+            x.put(
+                    "material_product",
+                    material != null
+                            ? productBuilder.buildItem(material)
+                            : null
+            );
+
+            x.put("warehouse", warehouseMap.get(i.getMaterialWarehouseId()));
+
+            InventoryLot lot = inventoryLotMap.get(i.getInventoryLotId());
+            if (lot != null) {
+                x.put("expiry_date", lot.getExpiryDate());
+                x.put("quantity_remaining", lot.getQuantityRemaining());
+            }
+
+            result.add(x);
+        }
+
+        return result;
+    }
+
+    private List<Map<String, Object>> buildSimpleList(List<?> items) {
+        if (CommonUtil.isNullOrEmpty(items)) {
+            return List.of();
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (Object item : items) {
+            result.add(new LinkedHashMap<>(autoBuildAny(item)));
         }
 
         return result;

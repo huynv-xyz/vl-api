@@ -5,6 +5,7 @@ import com.vlife.api.controller.base.BaseCrudController;
 import com.vlife.api.util.ApiUtil;
 import com.vlife.shared.api.dto.ApiResponse;
 import com.vlife.shared.jdbc.dao.UserDao;
+import com.vlife.shared.jdbc.dao.auth.UserRoleDao;
 import com.vlife.shared.jdbc.entity.User;
 import com.vlife.shared.util.CommonUtil;
 import io.micronaut.data.model.Page;
@@ -25,9 +26,18 @@ import java.util.Map;
 @Controller("/users")
 public class UserController extends BaseCrudController<User, Long, UserDao> {
 
+    private final UserRoleDao userRoleDao;
+
     @Inject
-    public UserController(UserDao dao, UserBuilder builder) {
+    public UserController(UserDao dao, UserBuilder builder, UserRoleDao userRoleDao) {
         super(dao, builder);
+        this.userRoleDao = userRoleDao;
+    }
+
+    @Override
+    protected void beforeDelete(Long id) {
+        // Dọn user_roles trước khi xoá user
+        userRoleDao.deleteByUserId(id.intValue());
     }
 
     @Override

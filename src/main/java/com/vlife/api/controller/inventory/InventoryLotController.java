@@ -10,10 +10,14 @@ import com.vlife.shared.jdbc.dao.sale.InventoryLotDao;
 import com.vlife.shared.jdbc.dao.sale.ProductStockDao;
 import com.vlife.shared.jdbc.entity.inventory.InventoryLedger;
 import com.vlife.shared.jdbc.entity.inventory.InventoryLot;
+import com.vlife.shared.service.inventory.OpeningStockImportService;
+import com.vlife.shared.service.inventory.PurchaseStockImportService;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
 import io.micronaut.http.HttpResponse;
+import io.micronaut.http.MediaType;
 import io.micronaut.http.annotation.*;
+import io.micronaut.http.multipart.CompletedFileUpload;
 import io.micronaut.serde.annotation.Serdeable;
 import io.micronaut.transaction.annotation.Transactional;
 import lombok.Getter;
@@ -29,16 +33,22 @@ public class InventoryLotController extends BaseCrudController<InventoryLot, Int
 
     private final ProductStockDao productStockDao;
     private final InventoryLedgerDao inventoryLedgerDao;
+    private final OpeningStockImportService openingStockImportService;
+    private final PurchaseStockImportService purchaseStockImportService;
 
     public InventoryLotController(
             InventoryLotDao dao,
             InventoryLotBuilder builder,
             ProductStockDao productStockDao,
-            InventoryLedgerDao inventoryLedgerDao
+            InventoryLedgerDao inventoryLedgerDao,
+            OpeningStockImportService openingStockImportService,
+            PurchaseStockImportService purchaseStockImportService
     ) {
         super(dao, builder);
         this.productStockDao = productStockDao;
         this.inventoryLedgerDao = inventoryLedgerDao;
+        this.openingStockImportService = openingStockImportService;
+        this.purchaseStockImportService = purchaseStockImportService;
     }
 
     @Override
@@ -51,6 +61,7 @@ public class InventoryLotController extends BaseCrudController<InventoryLot, Int
                 ApiUtil.toDate(filters.get("from_date")),
                 ApiUtil.toDate(filters.get("to_date")),
                 Boolean.parseBoolean(filters.getOrDefault("only_remaining", "false")),
+                ApiUtil.trim(filters.get("expiry_status")),
                 pageable
         );
     }
@@ -92,6 +103,8 @@ public class InventoryLotController extends BaseCrudController<InventoryLot, Int
         lot.setQuantityIn(req.getQuantityIn());
         lot.setQuantityRemaining(req.getQuantityIn());
         lot.setUnitCost(req.getUnitCost() != null ? req.getUnitCost() : BigDecimal.ZERO);
+        lot.setExpiryDate(ApiUtil.toDate(req.getExpiryDate()));
+        lot.setLocked(false);
         lot.setCreatedAt(now);
         lot.setUpdatedAt(now);
 
@@ -151,6 +164,7 @@ public class InventoryLotController extends BaseCrudController<InventoryLot, Int
         if (req.getSourceId() != null) update.setSourceId(req.getSourceId());
         if (req.getSourceNo() != null) update.setSourceNo(ApiUtil.trim(req.getSourceNo()));
         if (req.getUnitCost() != null) update.setUnitCost(req.getUnitCost());
+        if (req.getExpiryDate() != null) update.setExpiryDate(ApiUtil.toDate(req.getExpiryDate()));
 
         /*
          * Chỉ cho sửa quantity_remaining theo quantity_in nếu lô chưa bị xuất.
@@ -175,6 +189,26 @@ public class InventoryLotController extends BaseCrudController<InventoryLot, Int
         dao.updateSelective(id, update);
 
         return HttpResponse.ok(ApiResponse.success(true));
+    }
+
+    @Post(value = "/opening/import-csv", consumes = MediaType.MULTIPART_FORM_DATA, produces = MediaType.APPLICATION_JSON)
+    public HttpResponse<?> importOpeningCsv(@Part("file") CompletedFileUpload file) {
+        try {
+            var result = openingStockImportService.importCsv(file);
+            return HttpResponse.ok(ApiResponse.success(result));
+        } catch (Exception e) {
+            return HttpResponse.badRequest(ApiResponse.error(-400, e.getMessage()));
+        }
+    }
+
+    @Post(value = "/purchase/import-csv", consumes = MediaType.MULTIPART_FORM_DATA, produces = MediaType.APPLICATION_JSON)
+    public HttpResponse<?> importPurchaseCsv(@Part("file") CompletedFileUpload file) {
+        try {
+            var result = purchaseStockImportService.importCsv(file);
+            return HttpResponse.ok(ApiResponse.success(result));
+        } catch (Exception e) {
+            return HttpResponse.badRequest(ApiResponse.error(-400, e.getMessage()));
+        }
     }
 
     private ApiResponse<?> validateRequest(InventoryLotCreateRequest req) {
@@ -249,6 +283,9 @@ public class InventoryLotController extends BaseCrudController<InventoryLot, Int
 
         @JsonProperty("unit_cost")
         private BigDecimal unitCost;
+
+        @JsonProperty("expiry_date")
+        private String expiryDate;
     }
 
     @Setter

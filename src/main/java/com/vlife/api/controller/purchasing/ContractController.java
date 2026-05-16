@@ -6,6 +6,10 @@ import com.vlife.api.controller.base.BaseCrudController;
 import com.vlife.api.util.ApiUtil;
 import com.vlife.shared.api.dto.ApiResponse;
 import com.vlife.shared.jdbc.dao.purchasing.ContractDao;
+import com.vlife.shared.jdbc.dao.purchasing.ContractItemDao;
+import com.vlife.shared.jdbc.dao.purchasing.PaymentDao;
+import com.vlife.shared.jdbc.dao.purchasing.ShipmentDao;
+import com.vlife.shared.jdbc.dao.purchasing.ShipmentItemDao;
 import com.vlife.shared.jdbc.entity.purchasing.Contract;
 import com.vlife.shared.util.CommonUtil;
 import io.micronaut.data.model.Page;
@@ -24,9 +28,23 @@ import java.util.Map;
 @Controller("/purchasing/contracts")
 public class ContractController extends BaseCrudController<Contract, Integer, ContractDao> {
 
+    private final ContractItemDao contractItemDao;
+    private final PaymentDao paymentDao;
+    private final ShipmentDao shipmentDao;
+    private final ShipmentItemDao shipmentItemDao;
+
     @Inject
-    public ContractController(ContractDao dao, ContractBuilder builder) {
+    public ContractController(ContractDao dao,
+                              ContractBuilder builder,
+                              ContractItemDao contractItemDao,
+                              PaymentDao paymentDao,
+                              ShipmentDao shipmentDao,
+                              ShipmentItemDao shipmentItemDao) {
         super(dao, builder);
+        this.contractItemDao = contractItemDao;
+        this.paymentDao = paymentDao;
+        this.shipmentDao = shipmentDao;
+        this.shipmentItemDao = shipmentItemDao;
     }
 
     @Override
@@ -34,15 +52,28 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
 
         return dao.search(
                 ApiUtil.trim(filters.get("keyword")),
-                ApiUtil.parseInteger(filters.get("product_id")),
+                ApiUtil.parseIntegerList(firstNonBlank(filters.get("product_ids"), filters.get("product_id"))),
                 ApiUtil.trim(filters.get("product_keyword")),
 
-                ApiUtil.parseInteger(filters.get("supplier_id")),
+                ApiUtil.parseIntegerList(firstNonBlank(filters.get("supplier_ids"), filters.get("supplier_id"))),
+                ApiUtil.parseIntegerList(firstNonBlank(filters.get("nation_ids"), filters.get("nation_id"))),
                 ApiUtil.toDateTime(filters.get("signed_date_from")),
                 ApiUtil.toDateTime(filters.get("signed_date_to")),
 
                 pageable
         );
+    }
+
+    private static String firstNonBlank(String first, String second) {
+        return first != null && !first.isBlank() ? first : second;
+    }
+
+    @Override
+    protected void beforeDelete(Integer id) {
+        paymentDao.deleteAllByContractId(id);
+        shipmentItemDao.deleteAllByContractId(id);
+        shipmentDao.deleteAllByContractId(id);
+        contractItemDao.deleteAllByContractId(id);
     }
 
     // ========================
@@ -57,6 +88,7 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
             x.setCode(ApiUtil.trim(r.getCode()));
             x.setSupplierId(r.getSupplierId());
             x.setCurrencyId(r.getCurrencyId());
+            x.setExchangeRate(resolveExchangeRate(r.getExchangeRate()));
             x.setSignedDate(ApiUtil.toDate(r.getSignedDate()));
 
             x.setStatus(r.getStatus() != null ? r.getStatus() : "DRAFT");
@@ -66,6 +98,7 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
 
             x.setVatRate(ApiUtil.nvl(r.getVatRate()));
             x.setImportTaxRate(ApiUtil.nvl(r.getImportTaxRate()));
+            x.setHandlingFee(ApiUtil.nvl(r.getHandlingFee()));
             x.setPaymentMethod(ApiUtil.trim(r.getPaymentMethod()));
             x.setTerm(ApiUtil.trim(r.getTerm()));
 
@@ -88,6 +121,7 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
             x.setCode(ApiUtil.trim(r.getCode()));
             x.setSupplierId(r.getSupplierId());
             x.setCurrencyId(r.getCurrencyId());
+            x.setExchangeRate(resolveExchangeRate(r.getExchangeRate()));
             x.setSignedDate(ApiUtil.toDate(r.getSignedDate()));
 
             x.setStatus(r.getStatus());
@@ -97,6 +131,7 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
 
             x.setVatRate(ApiUtil.nvl(r.getVatRate()));
             x.setImportTaxRate(ApiUtil.nvl(r.getImportTaxRate()));
+            x.setHandlingFee(ApiUtil.nvl(r.getHandlingFee()));
             x.setPaymentMethod(ApiUtil.trim(r.getPaymentMethod()));
             x.setTerm(ApiUtil.trim(r.getTerm()));
 
@@ -154,6 +189,8 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
         BigDecimal depositRate = ApiUtil.nvl(entity.getDepositRate());
         BigDecimal vatRate = ApiUtil.nvl(entity.getVatRate());
         BigDecimal importTaxRate = ApiUtil.nvl(entity.getImportTaxRate());
+        BigDecimal handlingFee = ApiUtil.nvl(entity.getHandlingFee());
+        BigDecimal exchangeRate = ApiUtil.nvl(entity.getExchangeRate());
 
         if (depositRate.compareTo(BigDecimal.ZERO) < 0 || depositRate.compareTo(new BigDecimal("100")) > 0)
             return ApiResponse.error(-400, "deposit_rate must be between 0-100");
@@ -164,7 +201,21 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
         if (importTaxRate.compareTo(BigDecimal.ZERO) < 0 || importTaxRate.compareTo(new BigDecimal("100")) > 0)
             return ApiResponse.error(-400, "import_tax_rate must be between 0-100");
 
+        if (handlingFee.compareTo(BigDecimal.ZERO) < 0)
+            return ApiResponse.error(-400, "handling_fee must >= 0");
+
+        if (exchangeRate.compareTo(BigDecimal.ZERO) <= 0)
+            return ApiResponse.error(-400, "exchange_rate must be greater than 0");
+
         return null;
+    }
+
+    private BigDecimal resolveExchangeRate(BigDecimal value) {
+        if (value == null || value.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ONE;
+        }
+
+        return value;
     }
 
     // ========================
@@ -183,6 +234,9 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
         @JsonProperty("currency_id")
         private Integer currencyId;
 
+        @JsonProperty("exchange_rate")
+        private BigDecimal exchangeRate;
+
         @JsonProperty("signed_date")
         private String signedDate;
 
@@ -199,6 +253,9 @@ public class ContractController extends BaseCrudController<Contract, Integer, Co
 
         @JsonProperty("import_tax_rate")
         private BigDecimal importTaxRate;
+
+        @JsonProperty("handling_fee")
+        private BigDecimal handlingFee;
 
         @JsonProperty("payment_method")
         private String paymentMethod;
